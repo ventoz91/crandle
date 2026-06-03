@@ -92,8 +92,8 @@ def proxmox_to_markdown(data):
     return "\n".join(md)
 
 
-def load_inventory():
-    with open("inventory.yml", "r") as f:
+def load_inventory(path="inventory.yml"):
+    with open(path, "r") as f:
         return yaml.safe_load(f)
 
 
@@ -185,18 +185,40 @@ def display_proxmox(data):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Crandle homelab inventory scanner")
+    parser = argparse.ArgumentParser(
+        prog="inventory.py",
+        description="Crandle — homelab inventory scanner",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "examples:\n"
+            "  python inventory.py                        scan all hosts, save timestamped report\n"
+            "  python inventory.py --master               scan and update master HardwareSurvey.md\n"
+            "  python inventory.py --no-report            display only, write nothing\n"
+            "  python inventory.py --inventory ~/lab.yml  use a custom inventory file\n"
+        ),
+    )
     parser.add_argument(
         "--master",
         action="store_true",
-        help="Overwrite HardwareSurvey.md and save a timestamped archive",
+        help="overwrite HardwareSurvey.md and save a timestamped archive",
+    )
+    parser.add_argument(
+        "--no-report",
+        action="store_true",
+        help="display results in the terminal only, do not write any report files",
+    )
+    parser.add_argument(
+        "--inventory",
+        metavar="FILE",
+        default="inventory.yml",
+        help="path to inventory file (default: inventory.yml)",
     )
     args = parser.parse_args()
 
     report_sections = []
 
     try:
-        inventory = load_inventory()
+        inventory = load_inventory(args.inventory)
 
         for host in inventory.get("linux", []):
             console.print(f"\n[cyan]Connecting to Linux host {host['host']}[/cyan]")
@@ -220,7 +242,7 @@ def main():
                 console.print(f"[red]Failed Proxmox host {host['host']}[/red]")
                 console.print(str(e))
 
-        if report_sections:
+        if report_sections and not args.no_report:
             full_report = "\n".join(report_sections)
             if args.master:
                 master_path = write_master_report(full_report)
@@ -230,7 +252,7 @@ def main():
             else:
                 report_path = write_report(full_report)
                 console.print(f"\n[green]Report saved:[/green] {report_path}")
-        else:
+        elif not report_sections:
             console.print("\n[yellow]No data collected.[/yellow]")
 
     except KeyboardInterrupt:
