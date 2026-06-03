@@ -36,14 +36,14 @@ pip install -r requirements.txt
 
 ```yaml
 role_name:          # e.g. servers, workstations, network — any name
-  host_type:        # linux | macos | windows | proxmox | network (or any custom label)
+  host_type:        # linux | macos | windows | proxmox | network | firewall | switch | ap | router | ...
     - host: IP_OR_HOSTNAME
       user: USERNAME
-      collector: network   # optional — override which collector to use when host_type is a custom name
+      collector: network   # required when host_type is a descriptive label (firewall, switch, ap, router)
       # proxmox also accepts: realm, verify_ssl, token_id, token_secret
 ```
 
-If `collector` is omitted, `host_type` is used as the collector key. This allows descriptive host type names (e.g. `opnsense`, `router`) without breaking collector dispatch.
+If `collector` is omitted, `host_type` is used as the collector key. Descriptive type names (e.g. `firewall`, `switch`, `ap`, `router`) must include `collector: network` so the correct SSH-based collector is used. The type name appears as-is in the terminal tables and report headers.
 
 ## Report structure
 

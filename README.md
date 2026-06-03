@@ -52,15 +52,23 @@ workstations:
       user: YourUsername
 
 network:
-  network:
+  firewall:
     - host: 192.168.1.1
+      user: root
+      collector: network
+  switch:
+    - host: 192.168.1.2
       user: admin
+      collector: network
+  ap:
+    - host: 192.168.1.3
+      user: admin
+      collector: network
 ```
 
 `inventory.yml` is gitignored — it never leaves your machine.
 
-Supported host types under each role: `linux`, `macos`, `windows`, `proxmox`, `network`.
-Roles can be named anything; `servers`, `workstations`, and `network` are the conventional defaults.
+Supported collectors: `linux`, `macos`, `windows`, `proxmox`, `network`. The host type key (e.g. `firewall`, `switch`, `ap`) is just a label used in display and reports — set `collector: network` on any network device type to tell Crandle which collector to use.
 
 ### Proxmox API token
 
