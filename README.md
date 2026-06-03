@@ -23,7 +23,7 @@ Homelab inventory scanner. Connects to Linux, macOS, Windows, and network applia
 pip install -r requirements.txt
 ```
 
-SSH hosts authenticate via key by default, falling back to a password prompt (cached per username within a run, serialized so parallel scans don't collide). Proxmox hosts prompt for a password unless an API token is configured (recommended for automation).
+SSH hosts authenticate via key by default, falling back to a password prompt (cached per username within a run, serialized so parallel scans don't collide). Proxmox hosts prompt for a password unless an API token is configured (recommended for automation); Proxmox passwords are also cached per host so multiple Proxmox nodes with the same credentials only prompt once.
 
 ## Configuration
 
@@ -76,7 +76,17 @@ Enable Remote Login: **System Settings → General → Sharing → Remote Login*
 
 ### Network appliances
 
-Any device running standard Unix commands over SSH works out of the box (pfSense, OPNsense, OpenWrt). Vendor CLI devices (Mikrotik RouterOS, Cisco IOS, etc.) will connect successfully but command output may not parse cleanly — they are still useful as reachability placeholders in `--dry-run`.
+Any device running standard Unix commands over SSH works out of the box (pfSense, OPNsense, OpenWrt). Commands are wrapped in `sh -c` so they work correctly even on appliances with non-bash login shells like OPNsense's tcsh. Vendor CLI devices (Mikrotik RouterOS, Cisco IOS, etc.) will connect successfully but command output may not parse cleanly — they are still useful as reachability placeholders in `--dry-run`.
+
+If your network device has a host type name other than `network` in the inventory (e.g. `opnsense`, `router`), add `collector: network` to the host entry to tell Crandle which collector to use:
+
+```yaml
+network:
+  opnsense:
+    - host: 192.168.1.1
+      user: root
+      collector: network
+```
 
 ## Usage
 
@@ -95,7 +105,7 @@ python inventory.py [options]
 | `--host HOST` | Scan only hosts whose address contains HOST (substring) |
 | `--inventory FILE` | Use a custom inventory file instead of `inventory.yml` |
 
-Reports are saved to `~/Documents/Notes/Ventoz/Reference/`.
+Timestamped reports are saved to `~/Documents/Notes/Ventoz/Reference/Hardware Historic/`. The master `HardwareSurvey.md` stays at the top level of `Reference/`.
 
 ## Report structure
 

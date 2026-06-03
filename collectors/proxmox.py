@@ -1,10 +1,45 @@
 import getpass
+
 from proxmoxer import ProxmoxAPI
+
+from utils.ssh import _password_lock
+
+_proxmox_password_cache = {}
+
+
+def _fmt_bytes(n):
+    if n is None:
+        return "N/A"
+    n = int(n)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if abs(n) < 1024.0:
+            return f"{n:.1f} {unit}"
+        n /= 1024.0
+    return f"{n:.1f} PB"
+
+
+def _fmt_cpu(cpu):
+    if cpu is None:
+        return "N/A"
+    return f"{float(cpu) * 100:.1f}%"
+
+
+def _fmt_uptime(seconds):
+    if seconds is None:
+        return "N/A"
+    s = int(seconds)
+    d, s = divmod(s, 86400)
+    h, m = divmod(s, 3600)
+    m //= 60
+    if d > 0:
+        return f"{d}d {h}h {m}m"
+    if h > 0:
+        return f"{h}h {m}m"
+    return f"{m}m"
 
 
 def connect_proxmox(host: str, user: str, realm: str, verify_ssl: bool, token_id: str = None, token_secret: str = None):
     if token_id and token_secret:
-        # token_id may be the full Proxmox format "user@realm!tokenname" or just "tokenname"
         if "!" in token_id:
             full_user, token_name = token_id.split("!", 1)
         else:
@@ -17,11 +52,16 @@ def connect_proxmox(host: str, user: str, realm: str, verify_ssl: bool, token_id
             token_value=token_secret,
             verify_ssl=verify_ssl,
         )
-    password = getpass.getpass(f"Proxmox password for {user}@{host}: ")
+
+    cache_key = f"{user}@{host}"
+    with _password_lock:
+        if cache_key not in _proxmox_password_cache:
+            _proxmox_password_cache[cache_key] = getpass.getpass(f"Proxmox password for {user}@{host}: ")
+
     return ProxmoxAPI(
         host,
         user=f"{user}@{realm}",
-        password=password,
+        password=_proxmox_password_cache[cache_key],
         verify_ssl=verify_ssl,
     )
 
@@ -47,12 +87,12 @@ def collect_proxmox(host_config: dict):
         node_data = {
             "name": node_name,
             "status": node.get("status"),
-            "cpu": node.get("cpu"),
-            "memory_used": node.get("mem"),
-            "memory_total": node.get("maxmem"),
-            "disk_used": node.get("disk"),
-            "disk_total": node.get("maxdisk"),
-            "uptime": node.get("uptime"),
+            "cpu": _fmt_cpu(node.get("cpu")),
+            "memory_used": _fmt_bytes(node.get("mem")),
+            "memory_total": _fmt_bytes(node.get("maxmem")),
+            "disk_used": _fmt_bytes(node.get("disk")),
+            "disk_total": _fmt_bytes(node.get("maxdisk")),
+            "uptime": _fmt_uptime(node.get("uptime")),
             "vms": [],
             "lxc": [],
             "storage": [],
@@ -63,13 +103,13 @@ def collect_proxmox(host_config: dict):
                 "vmid": vm.get("vmid"),
                 "name": vm.get("name"),
                 "status": vm.get("status"),
-                "cpu": vm.get("cpu"),
+                "cpu": _fmt_cpu(vm.get("cpu")),
                 "cpus": vm.get("cpus"),
-                "memory": vm.get("mem"),
-                "max_memory": vm.get("maxmem"),
-                "disk": vm.get("disk"),
-                "max_disk": vm.get("maxdisk"),
-                "uptime": vm.get("uptime"),
+                "memory": _fmt_bytes(vm.get("mem")),
+                "max_memory": _fmt_bytes(vm.get("maxmem")),
+                "disk": _fmt_bytes(vm.get("disk")),
+                "max_disk": _fmt_bytes(vm.get("maxdisk")),
+                "uptime": _fmt_uptime(vm.get("uptime")),
             })
 
         for ct in proxmox.nodes(node_name).lxc.get():
@@ -77,13 +117,13 @@ def collect_proxmox(host_config: dict):
                 "vmid": ct.get("vmid"),
                 "name": ct.get("name"),
                 "status": ct.get("status"),
-                "cpu": ct.get("cpu"),
+                "cpu": _fmt_cpu(ct.get("cpu")),
                 "cpus": ct.get("cpus"),
-                "memory": ct.get("mem"),
-                "max_memory": ct.get("maxmem"),
-                "disk": ct.get("disk"),
-                "max_disk": ct.get("maxdisk"),
-                "uptime": ct.get("uptime"),
+                "memory": _fmt_bytes(ct.get("mem")),
+                "max_memory": _fmt_bytes(ct.get("maxmem")),
+                "disk": _fmt_bytes(ct.get("disk")),
+                "max_disk": _fmt_bytes(ct.get("maxdisk")),
+                "uptime": _fmt_uptime(ct.get("uptime")),
             })
 
         for storage in proxmox.nodes(node_name).storage.get():
@@ -92,9 +132,9 @@ def collect_proxmox(host_config: dict):
                 "type": storage.get("type"),
                 "enabled": storage.get("enabled"),
                 "active": storage.get("active"),
-                "used": storage.get("used"),
-                "total": storage.get("total"),
-                "available": storage.get("avail"),
+                "used": _fmt_bytes(storage.get("used")),
+                "total": _fmt_bytes(storage.get("total")),
+                "available": _fmt_bytes(storage.get("avail")),
             })
 
         data["nodes"].append(node_data)

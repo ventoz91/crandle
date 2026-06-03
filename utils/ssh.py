@@ -40,10 +40,13 @@ def connect(host: str, username: str):
         return client
 
 
-def run_command(client, command: str) -> str:
-    stdin, stdout, stderr = client.exec_command(command)
-    output = stdout.read().decode().strip()
-    error = stderr.read().decode().strip()
+def run_command(client, command: str, timeout: int = 30) -> str:
+    stdin, stdout, stderr = client.exec_command(command, timeout=timeout)
+    try:
+        output = stdout.read().decode().strip()
+        error = stderr.read().decode().strip()
+    except Exception:
+        return "ERROR: command timed out"
     if error:
         return f"ERROR: {error}"
     return output

@@ -3,17 +3,19 @@ from datetime import datetime
 
 
 REPORT_DIR = Path.home() / "Documents" / "Notes" / "Ventoz" / "Reference"
+ARCHIVE_DIR = REPORT_DIR / "Hardware Historic"
 MASTER_PATH = REPORT_DIR / "HardwareSurvey.md"
 
 
-def _ensure_dir():
+def _ensure_dirs():
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def get_report_path():
-    _ensure_dir()
+    _ensure_dirs()
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
-    return REPORT_DIR / f"HardwareSurvey_{timestamp}.md"
+    return ARCHIVE_DIR / f"HardwareSurvey_{timestamp}.md"
 
 
 def write_report(content: str) -> Path:
@@ -24,7 +26,7 @@ def write_report(content: str) -> Path:
 
 
 def write_master_report(content: str) -> Path:
-    _ensure_dir()
+    _ensure_dirs()
     with open(MASTER_PATH, "w", encoding="utf-8") as f:
         f.write(content)
     return MASTER_PATH

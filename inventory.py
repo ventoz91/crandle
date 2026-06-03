@@ -189,6 +189,8 @@ def display_macos(data):
     table.add_column("Property")
     table.add_column("Value")
     for key, value in data.items():
+        if key == "hostname":
+            continue
         table.add_row(key, str(value))
     console.print(table)
 
@@ -281,28 +283,28 @@ def display_summary(results: list):
     table.add_column("Status")
     table.add_column("Details")
 
-    for role, host_type, host_addr, data, err in results:
+    for role, host_type, collector, host_addr, data, err in results:
         if err:
             table.add_row(role, host_addr, host_type, "[red]failed[/red]", str(err)[:60])
-        elif host_type in ("linux", "macos"):
+        elif collector in ("linux", "macos"):
             table.add_row(
                 role, data.get("hostname", host_addr), host_type,
                 "[green]up[/green]",
                 f"{data.get('uptime', '')}  |  {data.get('memory', '')}",
             )
-        elif host_type == "windows":
+        elif collector == "windows":
             table.add_row(
                 role, data.get("hostname", host_addr), host_type,
                 "[green]up[/green]",
                 f"{data.get('os', '')}  |  {data.get('memory', '')}",
             )
-        elif host_type == "network":
+        elif collector == "network":
             table.add_row(
                 role, data.get("hostname", host_addr), host_type,
                 "[green]up[/green]",
                 f"{data.get('platform', '')}  |  {data.get('uptime', '')}",
             )
-        elif host_type == "proxmox":
+        elif collector == "proxmox":
             for node in data.get("nodes", []):
                 vms_running = sum(1 for v in node.get("vms", []) if v.get("status") == "running")
                 lxc_running = sum(1 for c in node.get("lxc", []) if c.get("status") == "running")
@@ -408,35 +410,44 @@ def show_diff(new_report: str):
 
 def scan_linux(host_config: dict) -> tuple:
     host = host_config["host"]
+    client = None
     try:
         client = connect(host, host_config["user"])
         data = collect_linux(client)
-        client.close()
         return (host, data, None)
     except Exception as e:
         return (host, None, e)
+    finally:
+        if client:
+            client.close()
 
 
 def scan_macos(host_config: dict) -> tuple:
     host = host_config["host"]
+    client = None
     try:
         client = connect(host, host_config["user"])
         data = collect_macos(client)
-        client.close()
         return (host, data, None)
     except Exception as e:
         return (host, None, e)
+    finally:
+        if client:
+            client.close()
 
 
 def scan_network(host_config: dict) -> tuple:
     host = host_config["host"]
+    client = None
     try:
         client = connect(host, host_config["user"])
         data = collect_network(client)
-        client.close()
         return (host, data, None)
     except Exception as e:
         return (host, None, e)
+    finally:
+        if client:
+            client.close()
 
 
 def scan_proxmox(host_config: dict) -> tuple:
@@ -450,13 +461,16 @@ def scan_proxmox(host_config: dict) -> tuple:
 
 def scan_windows(host_config: dict) -> tuple:
     host = host_config["host"]
+    client = None
     try:
         client = connect(host, host_config["user"])
         data = collect_windows(client)
-        client.close()
         return (host, data, None)
     except Exception as e:
         return (host, None, e)
+    finally:
+        if client:
+            client.close()
 
 
 SCAN_FNS = {
@@ -534,11 +548,12 @@ def main():
         # Build ordered task list: (fn, host_config, task_key)
         scan_tasks = []
         for role, host_type, h in _iter_hosts(inventory):
-            fn = SCAN_FNS.get(host_type)
+            collector = h.get("collector", host_type)
+            fn = SCAN_FNS.get(collector)
             if fn is None:
-                console.print(f"[yellow]Unknown host type '{host_type}' in '{role}' — skipping[/yellow]")
+                console.print(f"[yellow]Unknown collector '{collector}' for '{host_type}' in '{role}' — skipping[/yellow]")
                 continue
-            scan_tasks.append((fn, h, (role, host_type, h["host"])))
+            scan_tasks.append((fn, h, (role, host_type, collector, h["host"])))
 
         if not scan_tasks:
             console.print("[yellow]No hosts defined in inventory.[/yellow]")
@@ -553,11 +568,11 @@ def main():
                 key = future_to_key[future]
                 host_addr, data, err = future.result()
                 results_by_key[key] = (host_addr, data, err)
-                role, host_type, _ = key
+                role, host_type, collector, _ = key
                 if err:
                     console.print(f"  [red]✗[/red] {host_addr} ({role}/{host_type})")
                 else:
-                    name = data.get("hostname", host_addr) if host_type != "proxmox" else host_addr
+                    name = data.get("hostname", host_addr) if collector != "proxmox" else host_addr
                     console.print(f"  [green]✓[/green] {name} ({role}/{host_type})")
 
         # Display detail tables and build report, both in inventory order
@@ -566,20 +581,20 @@ def main():
         sections_by_role = {}  # role -> [markdown strings]
 
         for fn, h, key in scan_tasks:
-            role, host_type, host_addr = key
+            role, host_type, collector, host_addr = key
             result = results_by_key.get(key)
             if result is None:
                 continue
 
             _, data, err = result
-            ordered_results.append((role, host_type, host_addr, data, err))
+            ordered_results.append((role, host_type, collector, host_addr, data, err))
 
             if err:
                 console.print(f"[red]Failed {host_type} host {host_addr} ({role}):[/red] {err}")
                 continue
 
-            DISPLAY_FNS[host_type](data)
-            sections_by_role.setdefault(role, []).append(MARKDOWN_FNS[host_type](data))
+            DISPLAY_FNS[collector](data)
+            sections_by_role.setdefault(role, []).append(MARKDOWN_FNS[collector](data))
 
         console.print()
         display_summary(ordered_results)

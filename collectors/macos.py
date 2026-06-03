@@ -10,7 +10,7 @@ def collect_macos(client):
         "uptime": "uptime | sed 's/.*up /up /' | sed 's/,  [0-9]* user.*//'",
         "cpu": "sysctl -n machdep.cpu.brand_string",
         "memory": "top -l 1 -s 0 | grep PhysMem | sed 's/PhysMem: //'",
-        "disk": "df -h / | awk 'NR==2{print $3 \" used / \" $2 \" total (\" $5 \")'\"'\"'}'",
+        "disk": "df -h / | awk 'NR==2{print $3 \" used / \" $2 \" total (\" $5 \")\"}'",
         "ip": "ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || echo N/A",
     }
 
