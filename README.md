@@ -83,57 +83,15 @@ Enable the built-in OpenSSH Server: **Settings → System → Optional Features 
 
 Enable Remote Login: **System Settings → General → Sharing → Remote Login**.
 
-### Network appliances (pfSense / OPNsense / OpenWrt)
+### Network appliances (pfSense / OPNsense / OpenWrt / TP-Link Omada APs)
 
-Any device running standard Unix commands over SSH works out of the box. Commands are base64-encoded before sending so they arrive in `/bin/sh` verbatim, bypassing non-bash login shells like OPNsense's tcsh. BSD tools (ifconfig, netstat) are tried first with Linux tools as fallback.
+Any device running standard Unix commands over SSH works out of the box. Commands are base64-encoded before sending so they arrive in `/bin/sh` verbatim, bypassing non-bash login shells like OPNsense's tcsh. BSD tools are tried first with Linux fallbacks.
 
-Vendor CLI devices (Mikrotik RouterOS, Cisco IOS, etc.) will connect but command output won't parse — useful as reachability placeholders in `--dry-run`.
-
-If your network device has a descriptive host type name (e.g. `firewall`, `router`), add `collector: network` so Crandle knows which collector to use:
-
-```yaml
-network:
-  firewall:
-    - host: 192.168.1.1
-      user: root
-      collector: network
-```
-
-### TP-Link Omada APs (EAP series)
-
-Omada APs run Linux/OpenWrt, so the standard `network` collector works once SSH is enabled.
-
-**Via Omada Controller:**
-1. Open the controller → **Settings → Site → Services → SSH**
-2. Toggle SSH on and set the credentials
-
-**Standalone mode:**
-1. Open the AP's web UI at `http://<ap-ip>`
-2. Go to **Management → SSH** and enable it
-
-Add to `inventory.yml` under `network: ap:` with `collector: network`.
+If your network device has a descriptive host type name (e.g. `firewall`, `router`, `ap`), add `collector: network` so Crandle knows which collector to use. See [SETUP.md](SETUP.md) for SSH setup instructions for OPNsense and TP-Link Omada APs.
 
 ### Managed switches (Netgear ProSAFE / GS748TS)
 
-The `switch` collector uses an interactive PTY session to speak the ProSAFE CLI. It collects model, firmware version, serial number, uptime, management IP, default gateway, port status (up/total), and MAC table entry count.
-
-**Enable SSH on the GS748TS:**
-1. Log into the web GUI (default `http://192.168.0.239` or check the sticker)
-2. Go to **Security → Management Security → Remote Management**
-3. Set **SSH** to **Enabled**, port 22
-4. Go to **System → Management → User Accounts** and confirm the admin user is active
-5. Optionally set a **System Name** (System → General → System Information) — this becomes the hostname in Crandle; otherwise the model string is used
-
-**Add to `inventory.yml`:**
-
-```yaml
-network:
-  switch:
-    - host: 192.168.0.X
-      user: admin
-```
-
-No `collector:` key needed — the `switch` host type routes to the switch collector automatically. For OpenWrt-based smart switches that run real Unix tools, add `collector: network` instead.
+The `switch` collector uses an interactive PTY session to speak the ProSAFE CLI. No `collector:` key needed — `switch` host types route to it automatically. See [SETUP.md](SETUP.md) for full setup instructions.
 
 ## Usage
 

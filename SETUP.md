@@ -158,3 +158,83 @@ network:
 
 > Note: vendor CLI devices (Mikrotik, Cisco, etc.) will connect successfully but some
 > fields may show raw or unparseable output. The host will still appear in the report.
+
+---
+
+## TP-Link Omada APs (EAP series)
+
+Omada APs run Linux/OpenWrt, so the standard `network` collector works once SSH is
+enabled. No special collector needed.
+
+### 1. Enable SSH
+
+**Via Omada Controller (recommended):**
+
+1. Open the controller → **Settings → Site → Services → SSH**
+2. Toggle SSH on and set a username and password
+
+**Standalone mode (no controller):**
+
+1. Open the AP's web UI at `http://<ap-ip>`
+2. Go to **Management → SSH** and enable it
+
+### 2. Add your public key (optional but recommended)
+
+If your Omada version supports it, paste your public key into the SSH authorized keys
+field in the controller or the AP's SSH settings. Otherwise Crandle will fall back to
+password auth and cache it for the run.
+
+### 3. Add to inventory
+
+```yaml
+network:
+  ap:
+    - host: 192.168.0.X
+      user: admin         # or whatever you set in the SSH settings
+      collector: network
+```
+
+---
+
+## Netgear GS748TS (ProSAFE managed switch)
+
+Crandle uses the `switch` collector, which opens an interactive PTY session and speaks
+the ProSAFE CLI. It collects model, firmware, serial, uptime, management IP, gateway,
+port status (up/total), and MAC table entry count.
+
+### 1. Enable SSH on the switch
+
+1. Log into the web GUI (default `http://192.168.0.239` — or check the sticker on the unit)
+2. Go to **Security → Management Security → Remote Management**
+3. Set **SSH** to **Enabled**, port 22
+4. Go to **System → Management → User Accounts** and confirm your admin user is active
+
+### 2. Set a system name (optional)
+
+If you want a friendly hostname in Crandle instead of the model string (e.g. `GS748Tv5`):
+
+1. Go to **System → General → System Information**
+2. Set **System Name** to something like `core-switch`
+
+### 3. Copy your SSH key (optional)
+
+The GS748TS supports RSA public key auth via the web GUI:
+
+1. Go to **Security → Management Security → SSH**
+2. Under **SSH User Key Management**, upload your `id_rsa.pub` (RSA only — the GS748TS
+   does not support Ed25519 keys; generate one with `ssh-keygen -t rsa -b 4096` if needed)
+
+If key auth isn't configured, Crandle will prompt for a password and cache it.
+
+### 4. Add to inventory
+
+```yaml
+network:
+  switch:
+    - host: 192.168.0.X
+      user: admin
+```
+
+No `collector:` key needed — the `switch` host type routes to the ProSAFE CLI collector
+automatically. For OpenWrt-based smart switches that support standard Unix tools, add
+`collector: network` to override.
