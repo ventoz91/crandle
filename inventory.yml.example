@@ -1,0 +1,16 @@
+linux:
+  - host: 192.168.1.10
+    user: admin
+
+  - host: 192.168.1.11
+    user: admin
+
+proxmox:
+  - host: 192.168.1.20
+    user: root
+    realm: pam
+    verify_ssl: false
+    # For non-interactive/automated runs, create an API token in the Proxmox UI
+    # (Datacenter > Permissions > API Tokens) and add it here:
+    # token_id: crandle
+    # token_secret: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
