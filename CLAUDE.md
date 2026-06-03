@@ -26,7 +26,8 @@ pip install -r requirements.txt
 - **`inventory.yml`** — defines the hosts to scan. Top-level keys are **role names** (`servers`, `workstations`, `network`, or any custom label). Under each role, hosts are grouped by **host type** (`linux`, `macos`, `windows`, `proxmox`, `network`). Roles with only comments parse as `null` and are silently skipped.
 - **`collectors/linux.py`** — `collect_linux(client)` runs shell commands over an open Paramiko SSH client and returns a flat `{key: output}` dict including Docker containers, load average, interfaces, logged-in users, and failed systemd services.
 - **`collectors/macos.py`** — `collect_macos(client)` collects macOS system info (sw_vers, sysctl, top, brew) via SSH.
-- **`collectors/network.py`** — `collect_network(client)` runs basic Unix commands (hostname, uname, uptime, ip/ifconfig, route, arp) suitable for pfSense, OPNsense, OpenWrt, and similar appliances. All commands are wrapped in `sh -c` to handle non-bash login shells (e.g. OPNsense uses tcsh).
+- **`collectors/network.py`** — `collect_network(client)` runs basic Unix commands (hostname, uname, uptime, ip/ifconfig, route, arp) suitable for pfSense, OPNsense, OpenWrt, TP-Link Omada APs, and similar appliances. Commands are base64-encoded and piped through `sh` to bypass non-bash login shells (OPNsense uses tcsh). BSD tools tried first with Linux fallbacks via Python-level `_try()`.
+- **`collectors/switch.py`** — `collect_switch(client)` uses `invoke_shell()` (PTY) to speak an interactive ProSAFE-style CLI session. Runs `show version`, `show sysinfo`, `show ip management`, `show port status all`, and `show mac-address-table count`. Returns model, firmware, serial, uptime, IP, gateway, port summary (up/total), and MAC table entry count. Designed for Netgear ProSAFE Smart/Managed switches; not compatible with Unix-tool devices (use `collect_network` for those).
 - **`collectors/proxmox.py`** — `collect_proxmox(host_config)` authenticates via `proxmoxer.ProxmoxAPI` and returns a nested dict with human-readable values: `{host, nodes: [{name, status, cpu (%), memory_* (GB), disk_* (GB), uptime (Xd Xh Xm), vms: [...], lxc: [...], storage: [...]}]}`. Contains `_fmt_bytes`, `_fmt_cpu`, and `_fmt_uptime` helpers that format raw API values at collection time. Password prompts use the shared `_password_lock` from `utils/ssh.py` and are cached per `user@host`.
 - **`collectors/windows.py`** — `collect_windows(client)` runs PowerShell commands via SSH and collects system info plus running non-Microsoft services (filtered by `PathName` not matching `\Windows\`).
 - **`utils/ssh.py`** — `connect(host, username)` returns an authenticated Paramiko client (key → password fallback; passwords are cached per username; `_password_lock` serializes all password prompts — SSH and Proxmox — so parallel scans don't interleave). `run_command(client, cmd, timeout=30)` executes a command with a 30-second read timeout and returns stdout as a stripped string.
@@ -36,14 +37,14 @@ pip install -r requirements.txt
 
 ```yaml
 role_name:          # e.g. servers, workstations, network — any name
-  host_type:        # linux | macos | windows | proxmox | network | firewall | switch | ap | router | ...
+  host_type:        # linux | macos | windows | proxmox | network | switch | firewall | ap | router | ...
     - host: IP_OR_HOSTNAME
       user: USERNAME
-      collector: network   # required when host_type is a descriptive label (firewall, switch, ap, router)
+      collector: network   # override when host_type is a descriptive label that isn't a collector name
       # proxmox also accepts: realm, verify_ssl, token_id, token_secret
 ```
 
-If `collector` is omitted, `host_type` is used as the collector key. Descriptive type names (e.g. `firewall`, `switch`, `ap`, `router`) must include `collector: network` so the correct SSH-based collector is used. The type name appears as-is in the terminal tables and report headers.
+If `collector` is omitted, `host_type` is used as the collector key directly. Registered collectors: `linux`, `macos`, `windows`, `proxmox`, `network`, `switch`. Descriptive type names like `firewall`, `ap`, `router` need `collector: network`; `switch` routes to the ProSAFE CLI collector automatically (no override needed). For OpenWrt-based managed switches, add `collector: network` to override. The type name appears as-is in terminal tables and report headers.
 
 ## Report structure
 

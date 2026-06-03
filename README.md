@@ -7,7 +7,8 @@ Homelab inventory scanner. Connects to Linux, macOS, Windows, and network applia
 - **Linux hosts** — hostname, OS, kernel, CPU, memory, disk, load average, IP, interfaces, logged-in users, failed systemd services, Docker containers
 - **macOS hosts** — hostname, OS version, kernel, CPU, memory, disk, uptime, Homebrew package count
 - **Windows hosts** — hostname, OS, CPU, memory, disk, IP, uptime, running third-party services (Microsoft/Windows built-ins filtered out); requires OpenSSH Server
-- **Network appliances** — hostname, platform, uptime, IP addresses, routing table, ARP count; SSH-based, works with pfSense, OPNsense, OpenWrt
+- **Network appliances** — hostname, platform, uptime, IP addresses, routing table, ARP count; SSH-based, works with pfSense, OPNsense, OpenWrt, TP-Link Omada APs
+- **Managed switches** — model, firmware, serial, uptime, management IP, port status summary (up/total), MAC table entry count; interactive CLI collector for Netgear ProSAFE-style switches
 - **Proxmox hosts** — node stats, all VMs and LXC containers (status, CPUs, memory, uptime), storage pools
 - **Role-based organization** — inventory and report are grouped into Servers, Workstations, Network Equipment
 - **Parallel scanning** — all hosts scanned concurrently via a thread pool
@@ -82,19 +83,57 @@ Enable the built-in OpenSSH Server: **Settings → System → Optional Features 
 
 Enable Remote Login: **System Settings → General → Sharing → Remote Login**.
 
-### Network appliances
+### Network appliances (pfSense / OPNsense / OpenWrt)
 
-Any device running standard Unix commands over SSH works out of the box (pfSense, OPNsense, OpenWrt). Commands are wrapped in `sh -c` so they work correctly even on appliances with non-bash login shells like OPNsense's tcsh. Vendor CLI devices (Mikrotik RouterOS, Cisco IOS, etc.) will connect successfully but command output may not parse cleanly — they are still useful as reachability placeholders in `--dry-run`.
+Any device running standard Unix commands over SSH works out of the box. Commands are base64-encoded before sending so they arrive in `/bin/sh` verbatim, bypassing non-bash login shells like OPNsense's tcsh. BSD tools (ifconfig, netstat) are tried first with Linux tools as fallback.
 
-If your network device has a host type name other than `network` in the inventory (e.g. `opnsense`, `router`), add `collector: network` to the host entry to tell Crandle which collector to use:
+Vendor CLI devices (Mikrotik RouterOS, Cisco IOS, etc.) will connect but command output won't parse — useful as reachability placeholders in `--dry-run`.
+
+If your network device has a descriptive host type name (e.g. `firewall`, `router`), add `collector: network` so Crandle knows which collector to use:
 
 ```yaml
 network:
-  opnsense:
+  firewall:
     - host: 192.168.1.1
       user: root
       collector: network
 ```
+
+### TP-Link Omada APs (EAP series)
+
+Omada APs run Linux/OpenWrt, so the standard `network` collector works once SSH is enabled.
+
+**Via Omada Controller:**
+1. Open the controller → **Settings → Site → Services → SSH**
+2. Toggle SSH on and set the credentials
+
+**Standalone mode:**
+1. Open the AP's web UI at `http://<ap-ip>`
+2. Go to **Management → SSH** and enable it
+
+Add to `inventory.yml` under `network: ap:` with `collector: network`.
+
+### Managed switches (Netgear ProSAFE / GS748TS)
+
+The `switch` collector uses an interactive PTY session to speak the ProSAFE CLI. It collects model, firmware version, serial number, uptime, management IP, default gateway, port status (up/total), and MAC table entry count.
+
+**Enable SSH on the GS748TS:**
+1. Log into the web GUI (default `http://192.168.0.239` or check the sticker)
+2. Go to **Security → Management Security → Remote Management**
+3. Set **SSH** to **Enabled**, port 22
+4. Go to **System → Management → User Accounts** and confirm the admin user is active
+5. Optionally set a **System Name** (System → General → System Information) — this becomes the hostname in Crandle; otherwise the model string is used
+
+**Add to `inventory.yml`:**
+
+```yaml
+network:
+  switch:
+    - host: 192.168.0.X
+      user: admin
+```
+
+No `collector:` key needed — the `switch` host type routes to the switch collector automatically. For OpenWrt-based smart switches that run real Unix tools, add `collector: network` instead.
 
 ## Usage
 
@@ -161,8 +200,9 @@ inventory.yml           # Host definitions (gitignored — edit directly)
 collectors/
   linux.py              # SSH: system info, Docker
   macos.py              # SSH: system info, Homebrew
-  network.py            # SSH: hostname, platform, routing (pfSense/OPNsense/OpenWrt)
+  network.py            # SSH: hostname, platform, routing (pfSense/OPNsense/OpenWrt/Omada AP)
   proxmox.py            # Proxmox API: nodes, VMs, LXC, storage
+  switch.py             # Interactive CLI: Netgear ProSAFE managed switches
   windows.py            # SSH + PowerShell: system info, third-party services
 utils/
   ssh.py                # Paramiko connection helper (key → password fallback, thread-safe)

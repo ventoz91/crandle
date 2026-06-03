@@ -13,6 +13,7 @@ from collectors.linux import collect_linux
 from collectors.macos import collect_macos
 from collectors.network import collect_network
 from collectors.proxmox import collect_proxmox
+from collectors.switch import collect_switch
 from collectors.windows import collect_windows
 
 
@@ -127,6 +128,23 @@ def proxmox_to_markdown(data):
             )
         md += ["", "---", ""]
 
+    return "\n".join(md)
+
+
+def switch_to_markdown(data):
+    md = [f"## {data['hostname']} (switch)", ""]
+    md += ["| Property | Value |", "|----------|-------|"]
+    labels = {
+        "model": "Model", "firmware": "Firmware", "serial": "Serial",
+        "mac_address": "MAC Address", "uptime": "Uptime", "ip_address": "IP Address",
+        "gateway": "Default Gateway", "ports": "Ports", "mac_entries": "MAC Table Entries",
+    }
+    for key, value in data.items():
+        if key == "hostname":
+            continue
+        label = labels.get(key, key.replace("_", " ").title())
+        md.append(f"| {label} | {value} |")
+    md += ["", "---", ""]
     return "\n".join(md)
 
 
@@ -257,6 +275,23 @@ def display_proxmox(data):
         console.print(storage_table)
 
 
+def display_switch(data):
+    table = Table(title=f"Switch: {data['hostname']}")
+    table.add_column("Property")
+    table.add_column("Value")
+    labels = {
+        "model": "Model", "firmware": "Firmware", "serial": "Serial",
+        "mac_address": "MAC Address", "uptime": "Uptime", "ip_address": "IP Address",
+        "gateway": "Default Gateway", "ports": "Ports", "mac_entries": "MAC Table Entries",
+    }
+    for key, value in data.items():
+        if key == "hostname":
+            continue
+        label = labels.get(key, key.replace("_", " ").title())
+        table.add_row(label, str(value))
+    console.print(table)
+
+
 def display_windows(data):
     table = Table(title=f"Windows Host: {data['hostname']}")
     table.add_column("Property")
@@ -303,6 +338,12 @@ def display_summary(results: list):
                 role, data.get("hostname", host_addr), host_type,
                 "[green]up[/green]",
                 f"{data.get('platform', '')}  |  {data.get('uptime', '')}",
+            )
+        elif collector == "switch":
+            table.add_row(
+                role, data.get("hostname", host_addr), host_type,
+                "[green]up[/green]",
+                f"{data.get('model', '')}  |  {data.get('uptime', '')}  |  {data.get('ports', '')}",
             )
         elif collector == "proxmox":
             for node in data.get("nodes", []):
@@ -459,6 +500,20 @@ def scan_proxmox(host_config: dict) -> tuple:
         return (host, None, e)
 
 
+def scan_switch(host_config: dict) -> tuple:
+    host = host_config["host"]
+    client = None
+    try:
+        client = connect(host, host_config["user"])
+        data = collect_switch(client)
+        return (host, data, None)
+    except Exception as e:
+        return (host, None, e)
+    finally:
+        if client:
+            client.close()
+
+
 def scan_windows(host_config: dict) -> tuple:
     host = host_config["host"]
     client = None
@@ -478,6 +533,7 @@ SCAN_FNS = {
     "macos": scan_macos,
     "network": scan_network,
     "proxmox": scan_proxmox,
+    "switch": scan_switch,
     "windows": scan_windows,
 }
 
@@ -486,6 +542,7 @@ MARKDOWN_FNS = {
     "macos": macos_to_markdown,
     "network": network_to_markdown,
     "proxmox": proxmox_to_markdown,
+    "switch": switch_to_markdown,
     "windows": windows_to_markdown,
 }
 
@@ -494,6 +551,7 @@ DISPLAY_FNS = {
     "macos": display_macos,
     "network": display_network,
     "proxmox": display_proxmox,
+    "switch": display_switch,
     "windows": display_windows,
 }
 
