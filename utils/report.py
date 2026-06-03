@@ -28,3 +28,10 @@ def write_master_report(content: str) -> Path:
     with open(MASTER_PATH, "w", encoding="utf-8") as f:
         f.write(content)
     return MASTER_PATH
+
+
+def read_master_report() -> str | None:
+    if not MASTER_PATH.exists():
+        return None
+    with open(MASTER_PATH, "r", encoding="utf-8") as f:
+        return f.read()
