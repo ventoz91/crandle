@@ -4,10 +4,16 @@ from proxmoxer import ProxmoxAPI
 
 def connect_proxmox(host: str, user: str, realm: str, verify_ssl: bool, token_id: str = None, token_secret: str = None):
     if token_id and token_secret:
+        # token_id may be the full Proxmox format "user@realm!tokenname" or just "tokenname"
+        if "!" in token_id:
+            full_user, token_name = token_id.split("!", 1)
+        else:
+            full_user = f"{user}@{realm}"
+            token_name = token_id
         return ProxmoxAPI(
             host,
-            user=f"{user}@{realm}",
-            token_name=token_id,
+            user=full_user,
+            token_name=token_name,
             token_value=token_secret,
             verify_ssl=verify_ssl,
         )
