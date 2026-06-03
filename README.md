@@ -51,12 +51,15 @@ Create a token in the Proxmox UI: **Datacenter → Permissions → API Tokens �
 ## Usage
 
 ```bash
-# Standard run — saves HardwareSurvey_<timestamp>.md
-python inventory.py
-
-# Master run — overwrites HardwareSurvey.md and saves a timestamped archive
-python inventory.py --master
+python inventory.py [options]
 ```
+
+| Flag | Description |
+|------|-------------|
+| _(none)_ | Scan all hosts, save a timestamped report |
+| `--master` | Overwrite `HardwareSurvey.md` and save a timestamped archive |
+| `--no-report` | Display results in the terminal only, write nothing |
+| `--inventory FILE` | Use a custom inventory file instead of `inventory.yml` |
 
 Reports are saved to `~/Documents/Notes/Ventoz/Reference/`.
 
