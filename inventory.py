@@ -36,7 +36,7 @@ def _status_style(status: str) -> str:
 # Markdown renderers  (## for host, ### for subsections, #### for sub-sub)
 # ---------------------------------------------------------------------------
 
-_LINUX_SKIP = {"hostname", "docker_containers", "failed_services", "all_disks"}
+_LINUX_SKIP = {"hostname", "docker_containers", "failed_services", "all_disks", "docker_compose_files"}
 
 def linux_to_markdown(data):
     md = [f"## {data['hostname']}", ""]
@@ -66,6 +66,10 @@ def linux_to_markdown(data):
         for ct in data["docker_containers"]:
             md.append(f"| {ct['id']} | {ct['name']} | {ct['image']} | {ct['status']} | {ct['ports']} |")
         md.append("")
+
+    if data.get("docker_compose_files"):
+        for cf in data["docker_compose_files"]:
+            md += [f"### Docker Compose — `{cf['path']}`", "", "```yaml", cf["content"], "```", ""]
 
     md += ["---", ""]
     return "\n".join(md)
@@ -311,6 +315,10 @@ def display_linux(data):
             styled = f"[green]{status}[/green]" if "Up" in status else f"[red]{status}[/red]"
             docker_table.add_row(ct["id"], ct["name"], ct["image"], styled, ct["ports"])
         console.print(docker_table)
+
+    if data.get("docker_compose_files"):
+        for cf in data["docker_compose_files"]:
+            console.print(f"\n[bold]Docker Compose:[/bold] {cf['path']}\n{cf['content']}")
 
 
 def display_macos(data):

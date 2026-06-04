@@ -76,4 +76,20 @@ def collect_linux(client):
                 })
     data["docker_containers"] = containers
 
+    # Docker compose files
+    compose_paths_raw = run_command(
+        client,
+        "find /home/data -maxdepth 2 -name 'docker-compose.yml' 2>/dev/null",
+    )
+    compose_files = []
+    if compose_paths_raw and not compose_paths_raw.startswith("ERROR:"):
+        for path in compose_paths_raw.splitlines():
+            path = path.strip()
+            if not path:
+                continue
+            content = run_command(client, f"cat {path} 2>/dev/null")
+            if content and not content.startswith("ERROR:"):
+                compose_files.append({"path": path, "content": content})
+    data["docker_compose_files"] = compose_files
+
     return data
