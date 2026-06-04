@@ -1,46 +1,29 @@
-from pysnmp.hlapi import (
-    CommunityData, ContextData, ObjectIdentity, ObjectType,
-    SnmpEngine, UdpTransportTarget, getCmd, nextCmd,
-)
+import puresnmp
 
 # Standard ifType values for physical Ethernet ports
 _PHYSICAL_TYPES = {6, 117}  # ethernetCsmacd, gigabitEthernet
 
 
 def _get(host, community, port, oid):
-    err_ind, err_status, _, var_binds = next(
-        getCmd(
-            SnmpEngine(),
-            CommunityData(community, mpModel=1),
-            UdpTransportTarget((host, port), timeout=5, retries=1),
-            ContextData(),
-            ObjectType(ObjectIdentity(oid)),
-        )
-    )
-    if err_ind or err_status:
+    try:
+        return puresnmp.get(host, community, oid, port=port, timeout=5)
+    except Exception:
         return None
-    return var_binds[0][1]
 
 
 def _walk(host, community, port, oid):
-    results = []
-    for err_ind, err_status, _, var_binds in nextCmd(
-        SnmpEngine(),
-        CommunityData(community, mpModel=1),
-        UdpTransportTarget((host, port), timeout=5, retries=1),
-        ContextData(),
-        ObjectType(ObjectIdentity(oid)),
-        lexicographicMode=False,
-    ):
-        if err_ind or err_status:
-            break
-        for _, val in var_binds:
-            results.append(val)
-    return results
+    try:
+        return [vb.value for vb in puresnmp.walk(host, community, oid, port=port, timeout=5)]
+    except Exception:
+        return []
 
 
 def _str(val):
-    return val.prettyPrint() if val is not None else "Unknown"
+    if val is None:
+        return "Unknown"
+    if isinstance(val, bytes):
+        return val.decode("utf-8", errors="replace").strip()
+    return str(val)
 
 
 def _fmt_uptime(ticks):
@@ -58,7 +41,7 @@ def _fmt_uptime(ticks):
 
 
 def collect_snmp(host_config: dict) -> dict:
-    """SNMP collector for managed switches and other SNMP-capable devices.
+    """SNMP collector for managed switches and other SNMPv2c devices.
 
     Uses standard MIBs (RFC 1213, IF-MIB, IP-MIB, BRIDGE-MIB) so it works
     on any SNMPv2c device — Netgear ProSAFE, Cisco, HP, etc.
@@ -74,11 +57,11 @@ def collect_snmp(host_config: dict) -> dict:
         return _walk(host, community, port, oid)
 
     # System group (RFC 1213)
-    hostname = _str(get("1.3.6.1.2.1.1.5.0"))   # sysName
-    descr    = _str(get("1.3.6.1.2.1.1.1.0"))   # sysDescr
-    uptime   = _fmt_uptime(get("1.3.6.1.2.1.1.3.0"))  # sysUpTime (TimeTicks)
+    hostname = _str(get("1.3.6.1.2.1.1.5.0"))          # sysName
+    descr    = _str(get("1.3.6.1.2.1.1.1.0"))          # sysDescr
+    uptime   = _fmt_uptime(get("1.3.6.1.2.1.1.3.0"))   # sysUpTime (TimeTicks)
 
-    # Management IP: first non-loopback address from ipAdEntAddr
+    # Management IP: first non-loopback from ipAdEntAddr
     ip_addrs   = [_str(v) for v in walk("1.3.6.1.2.1.4.20.1.1")]
     ip_address = next((ip for ip in ip_addrs if not ip.startswith("127.")), "Unknown")
 
