@@ -4,13 +4,13 @@ Homelab inventory scanner. Connects to Linux, macOS, Windows, and network applia
 
 ## Features
 
-- **Linux hosts** — hostname, OS, kernel, CPU, memory, disk, load average, IP, interfaces, logged-in users, failed systemd services, Docker containers
-- **macOS hosts** — hostname, OS version, kernel, CPU, memory, disk, uptime, Homebrew package count
-- **Windows hosts** — hostname, OS, CPU, memory, disk, IP, uptime, running third-party services (Microsoft/Windows built-ins filtered out); requires OpenSSH Server
-- **Network appliances** — hostname, platform, uptime, IP addresses, routing table, ARP count; SSH-based, works with pfSense, OPNsense, OpenWrt, TP-Link Omada APs
-- **Managed switches (SNMP)** — hostname, description, uptime, port status (up/total), MAC table entry count, and a full port map (port → MAC → IP) cross-referencing FDB and ARP tables; works with any SNMPv2c or SNMPv3 device; requires `net-snmp` on the scanning machine
-- **Proxmox hosts** — node stats, all VMs and LXC containers (status, CPUs, memory, uptime), storage pools
-- **Role-based organization** — inventory and report are grouped into Servers, Workstations, Network Equipment
+- **Linux hosts** — OS, kernel, arch, CPU model/cores, memory, swap, all disks (used/total/% per mount), load average, last boot, IP, interfaces, DNS servers, timezone, NTP sync, virtualisation platform, listening ports, logged-in users, package count, failed systemd services, Docker containers
+- **macOS hosts** — OS version + build, model, serial, arch, CPU cores, memory, all disks, uptime, interfaces, DNS servers, timezone, FileVault status, Homebrew formula + cask counts
+- **Windows hosts** — OS version, CPU, cores/threads, GPU, memory, all drives, network adapters (MAC/speed/description), IP, domain, timezone, BIOS, motherboard, installed app count, running third-party services; requires OpenSSH Server
+- **Network appliances** — hostname, platform, uptime, load average, CPU, memory (used/total), root disk usage, IP addresses, default gateway, DNS servers, routing table, ARP count, interface table (name/status/addresses); SSH-based with BSD/Linux fallbacks, works with pfSense, OPNsense, OpenWrt, TP-Link Omada APs
+- **Managed switches (SNMP)** — hostname, description, contact, location, uptime, port status (up/total), MAC table entry count, VLAN list, and a full port map (port/speed → MAC → IP) cross-referencing FDB and ARP tables; works with any SNMPv2c or SNMPv3 device; requires `net-snmp` on the scanning machine
+- **Proxmox hosts** — node stats (CPU, memory, disk, uptime, PVE version, kernel, CPU model/threads), all VMs and LXC containers (status, tags, CPUs, memory, disk, uptime, snapshot count, guest IPs via QEMU agent, LXC IPs from config), storage pools; API version reported
+- **Role-based organization** — inventory and report are grouped by role (servers, workstations, network, or any custom label)
 - **Parallel scanning** — all hosts scanned concurrently via a thread pool
 - **Rich terminal output** — formatted tables with color-coded status (green = running/up, red = stopped/failed)
 - **Summary table** — at-a-glance view of every host after detail tables
@@ -69,11 +69,15 @@ network:
 
 `inventory.yml` is gitignored — it never leaves your machine.
 
-Supported collectors: `linux`, `macos`, `windows`, `proxmox`, `network`. The host type key (e.g. `firewall`, `switch`, `ap`) is just a label used in display and reports — set `collector: network` on any network device type to tell Crandle which collector to use.
+Supported collectors: `linux`, `macos`, `windows`, `proxmox`, `network`, `snmp`, `switch`. The host type key (e.g. `firewall`, `ap`, `router`) is just a label used in display and reports — set `collector: network` on any SSH-based network device, or `collector: snmp` for SNMP-managed switches.
 
 ### Proxmox API token
 
 Create a token in the Proxmox UI: **Datacenter → Permissions → API Tokens → Add**. Give it the `PVEAuditor` role for read-only access. Add `token_id` and `token_secret` to the host entry.
+
+### Proxmox QEMU guest agent
+
+To get guest IPs in the VM table, install `qemu-guest-agent` inside each VM and enable it in Proxmox: **VM → Options → QEMU Guest Agent → Enabled**. No reboot required once the agent is already running.
 
 ### Windows SSH
 
