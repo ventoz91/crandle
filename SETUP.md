@@ -198,43 +198,34 @@ network:
 
 ## Netgear GS748TS (ProSAFE managed switch)
 
-Crandle uses the `switch` collector, which opens an interactive PTY session and speaks
-the ProSAFE CLI. It collects model, firmware, serial, uptime, management IP, gateway,
-port status (up/total), and MAC table entry count.
+Crandle uses SNMP to collect data from this switch — no SSH required. It collects
+system description, uptime, management IP, port status (up/total), and MAC table
+entry count using standard MIBs that work on any SNMPv2c device.
 
-### 1. Enable SSH on the switch
+### 1. Enable SNMP on the switch
 
-1. Log into the web GUI (default `http://192.168.0.239` — or check the sticker on the unit)
-2. Go to **Security → Management Security → Remote Management**
-3. Set **SSH** to **Enabled**, port 22
-4. Go to **System → Management → User Accounts** and confirm your admin user is active
+1. Log into the web GUI
+2. Go to **System → SNMP** (or **Security → SNMP** depending on firmware)
+3. Enable **SNMP v1/v2c**
+4. Note the **read community string** — default is `public`
+5. If the UI asks for a trusted host IP, add your machine's IP or leave it open for
+   read-only access (read-only SNMP is low risk on a local network)
 
 ### 2. Set a system name (optional)
 
-If you want a friendly hostname in Crandle instead of the model string (e.g. `GS748Tv5`):
+If you want a friendly hostname in Crandle instead of the raw IP:
 
 1. Go to **System → General → System Information**
 2. Set **System Name** to something like `core-switch`
 
-### 3. Copy your SSH key (optional)
+This populates the `sysName` OID that Crandle reads for the hostname field.
 
-The GS748TS supports RSA public key auth via the web GUI:
-
-1. Go to **Security → Management Security → SSH**
-2. Under **SSH User Key Management**, upload your `id_rsa.pub` (RSA only — the GS748TS
-   does not support Ed25519 keys; generate one with `ssh-keygen -t rsa -b 4096` if needed)
-
-If key auth isn't configured, Crandle will prompt for a password and cache it.
-
-### 4. Add to inventory
+### 3. Add to inventory
 
 ```yaml
 network:
   switch:
     - host: 192.168.0.X
-      user: admin
+      community: public    # match whatever you set in the switch SNMP config
+      collector: snmp
 ```
-
-No `collector:` key needed — the `switch` host type routes to the ProSAFE CLI collector
-automatically. For OpenWrt-based smart switches that support standard Unix tools, add
-`collector: network` to override.

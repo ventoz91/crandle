@@ -13,6 +13,7 @@ from collectors.linux import collect_linux
 from collectors.macos import collect_macos
 from collectors.network import collect_network
 from collectors.proxmox import collect_proxmox
+from collectors.snmp import collect_snmp
 from collectors.switch import collect_switch
 from collectors.windows import collect_windows
 
@@ -128,6 +129,22 @@ def proxmox_to_markdown(data):
             )
         md += ["", "---", ""]
 
+    return "\n".join(md)
+
+
+def snmp_to_markdown(data):
+    md = [f"## {data['hostname']} (switch/snmp)", ""]
+    md += ["| Property | Value |", "|----------|-------|"]
+    labels = {
+        "description": "Description", "uptime": "Uptime",
+        "ip_address": "IP Address", "ports": "Ports", "mac_entries": "MAC Table Entries",
+    }
+    for key, value in data.items():
+        if key == "hostname":
+            continue
+        label = labels.get(key, key.replace("_", " ").title())
+        md.append(f"| {label} | {value} |")
+    md += ["", "---", ""]
     return "\n".join(md)
 
 
@@ -275,6 +292,22 @@ def display_proxmox(data):
         console.print(storage_table)
 
 
+def display_snmp(data):
+    table = Table(title=f"Switch: {data['hostname']} (SNMP)")
+    table.add_column("Property")
+    table.add_column("Value")
+    labels = {
+        "description": "Description", "uptime": "Uptime",
+        "ip_address": "IP Address", "ports": "Ports", "mac_entries": "MAC Table Entries",
+    }
+    for key, value in data.items():
+        if key == "hostname":
+            continue
+        label = labels.get(key, key.replace("_", " ").title())
+        table.add_row(label, str(value))
+    console.print(table)
+
+
 def display_switch(data):
     table = Table(title=f"Switch: {data['hostname']}")
     table.add_column("Property")
@@ -338,6 +371,12 @@ def display_summary(results: list):
                 role, data.get("hostname", host_addr), host_type,
                 "[green]up[/green]",
                 f"{data.get('platform', '')}  |  {data.get('uptime', '')}",
+            )
+        elif collector == "snmp":
+            table.add_row(
+                role, data.get("hostname", host_addr), host_type,
+                "[green]up[/green]",
+                f"{data.get('uptime', '')}  |  {data.get('ports', '')}  |  {data.get('mac_entries', '')} MACs",
             )
         elif collector == "switch":
             table.add_row(
@@ -500,6 +539,15 @@ def scan_proxmox(host_config: dict) -> tuple:
         return (host, None, e)
 
 
+def scan_snmp(host_config: dict) -> tuple:
+    host = host_config["host"]
+    try:
+        data = collect_snmp(host_config)
+        return (host, data, None)
+    except Exception as e:
+        return (host, None, e)
+
+
 def scan_switch(host_config: dict) -> tuple:
     host = host_config["host"]
     client = None
@@ -533,6 +581,7 @@ SCAN_FNS = {
     "macos": scan_macos,
     "network": scan_network,
     "proxmox": scan_proxmox,
+    "snmp": scan_snmp,
     "switch": scan_switch,
     "windows": scan_windows,
 }
@@ -542,6 +591,7 @@ MARKDOWN_FNS = {
     "macos": macos_to_markdown,
     "network": network_to_markdown,
     "proxmox": proxmox_to_markdown,
+    "snmp": snmp_to_markdown,
     "switch": switch_to_markdown,
     "windows": windows_to_markdown,
 }
@@ -551,6 +601,7 @@ DISPLAY_FNS = {
     "macos": display_macos,
     "network": display_network,
     "proxmox": display_proxmox,
+    "snmp": display_snmp,
     "switch": display_switch,
     "windows": display_windows,
 }
