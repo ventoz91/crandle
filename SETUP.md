@@ -232,28 +232,48 @@ network:
 
 ### Upgrading to SNMPv3 (recommended)
 
-SNMPv3 adds authentication and encryption so the community string is never
-sent in plaintext. The GS748TS supports SHA auth + AES privacy.
+SNMPv3 adds SHA authentication so credentials are never sent in plaintext.
+Crandle uses **authNoPriv** (auth without encryption) — sufficient for a
+trusted home LAN and avoids AES plugin availability issues.
 
-**Create an SNMPv3 user on the switch:**
+Requires `net-snmp` on the scanning machine: `sudo pacman -S net-snmp`.
 
-1. In the web GUI, go to the **SNMP** section
-2. Look for a **SNMPv3** tab or **SNMPv3 Users** submenu
-3. Add a new user:
-   - **User Name:** `crandle` (or any name)
-   - **Security Level:** `authPriv` (auth + encryption — most secure)
-   - **Authentication Protocol:** `SHA`
-   - **Authentication Key:** a passphrase of at least 8 characters
-   - **Privacy Protocol:** `AES`
-   - **Privacy Key:** a passphrase of at least 8 characters (can be different)
-   - **Access:** Read Only
-4. Save
+**Step 1 — Set a custom Engine ID**
 
-> Note: exact menu paths vary by firmware version. On v5.2.0.11 SNMP is
-> visible under its own menu — look for a "v3" or "Users" subsection inside it.
-> If you can only find v1/v2c options, your firmware may not expose v3 via the
-> GUI even if it supports it — try a firmware-level CLI approach or stick with
-> v2c on a trusted LAN.
+In the switch web GUI → **SNMP → SNMPv3 → Engine ID**: enter any 24-char hex
+string (e.g. `9be4055e41588e332e2e4433`) and save. This must be set before
+users can be created.
+
+**Step 2 — Create a view**
+
+SNMP → SNMPv3 → **View Name**: add `crandle-view`, save.
+
+SNMP → SNMPv3 → **View Content**: select `crandle-view`, set OID subtree to
+`1.3.6.1` (covers all standard MIBs), type `Included`, save.
+
+**Step 3 — Create a group**
+
+SNMP → SNMPv3 → **Group Configuration**:
+- Group Name: `crandle-group`
+- Security Model: `USM`
+- Security Level: `authNoPriv`
+- Read View: `crandle-view`
+- Write/Notify View: leave blank
+
+**Step 4 — Create a user**
+
+SNMP → SNMPv3 → **User Configuration**:
+- User Name: `crandle`
+- Group Name: `crandle-group`
+- Security Level: `authNoPriv`
+- Auth Protocol: `SHA`
+- Auth Key: generate a passphrase (the switch requires exactly 40 hex chars —
+  run `python -c "import secrets; print(secrets.token_hex(20))"` and use that)
+
+> The switch stores the key as a raw localized value. To make puresnmp/net-snmp
+> agree with the switch, compute the RFC 3414 localized key and enter that as
+> the switch auth key, then use the original passphrase in `inventory.yml`.
+> See CLAUDE.md for the derivation script if you need to regenerate.
 
 **Update `inventory.yml`:**
 
@@ -262,11 +282,6 @@ network:
   switch:
     - host: 192.168.0.X
       snmp_user: crandle
-      auth_key: your_auth_passphrase
-      priv_key: your_priv_passphrase
-      auth_proto: sha      # sha (default) | md5
-      priv_proto: aes      # aes (default) | des
+      auth_key: your_passphrase   # the passphrase, NOT the hex key entered in the switch
       collector: snmp
 ```
-
-`auth_proto` and `priv_proto` default to `sha`/`aes` if omitted.

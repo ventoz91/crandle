@@ -1,42 +1,109 @@
-import asyncio
-import datetime
-
-from puresnmp import Auth, Client, Priv, PyWrapper, V2C, V3
+import shutil
+import subprocess
 
 _PHYSICAL_TYPES = {6, 117}  # ethernetCsmacd, gigabitEthernet
 
 
-def _str(val):
-    if val is None:
+def _snmp_base_args(host_config: dict) -> list:
+    if host_config.get("snmp_user"):
+        user       = host_config["snmp_user"]
+        auth_key   = host_config.get("auth_key", "")
+        auth_proto = host_config.get("auth_proto", "SHA").upper()
+        priv_key   = host_config.get("priv_key", "")
+        priv_proto = host_config.get("priv_proto", "AES").upper()
+        if priv_key:
+            return ["-v3", "-l", "authPriv",    "-u", user,
+                    "-a", auth_proto, "-A", auth_key,
+                    "-x", priv_proto, "-X", priv_key]
+        return     ["-v3", "-l", "authNoPriv",  "-u", user,
+                    "-a", auth_proto, "-A", auth_key]
+    return ["-v2c", "-c", host_config.get("community", "public")]
+
+
+def _run(cmd: list, timeout: int = 30) -> str:
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return r.stdout
+    except Exception:
+        return ""
+
+
+def _get(target: str, args: list, oid: str) -> str | None:
+    """Single-OID get; returns the bare value string or None on failure."""
+    out = _run(["snmpget", "-Oqv", "-t5", "-r1"] + args + [target, oid],
+               timeout=10).strip().strip('"')
+    return out if out and "No Such" not in out and "Timeout" not in out else None
+
+
+def _walk(target: str, args: list, oid: str) -> list[tuple[str, str]]:
+    """Walk OID subtree; returns [(full_numeric_oid, value), ...].
+    Uses -On (full typed output) so value type is explicit and predictable."""
+    out = _run(["snmpwalk", "-On", "-t5", "-r1"] + args + [target, oid],
+               timeout=30)
+    results = []
+    for line in out.splitlines():
+        if " = " not in line:
+            continue
+        oid_part, rest = line.split(" = ", 1)
+        if "No Such" in rest or "End of MIB" in rest:
+            continue
+        # rest is like "INTEGER: 6" or "STRING: foo" or "Hex-STRING: 00 11 22"
+        val = rest.split(": ", 1)[1].strip().strip('"') if ": " in rest else rest.strip()
+        results.append((oid_part.strip(), val))
+    return results
+
+
+def _fmt_uptime(raw: str) -> str:
+    """Parse net-snmp uptime: 'D:H:MM:SS.cs', 'H:MM:SS.cs', or '(ticks) ...' """
+    if not raw:
         return "Unknown"
-    if isinstance(val, bytes):
-        return val.decode("utf-8", errors="replace").strip()
-    return str(val)
+    s = raw.strip().strip('"')
+    if s.startswith("(") and ")" in s:
+        s = s.split(")", 1)[1].strip()
+    # "N days, H:MM:SS.cs" written-out form
+    days = 0
+    if "day" in s:
+        day_part, s = s.split(",", 1)
+        days = int(day_part.strip().split()[0])
+        s = s.strip()
+    try:
+        parts = s.split(":")
+        if len(parts) == 4:                    # D:H:MM:SS.cs
+            days, h, m = int(parts[0]), int(parts[1]), int(parts[2])
+        else:                                  # H:MM:SS.cs
+            h, m = int(parts[0]), int(parts[1])
+        if days:
+            return f"{days}d {h}h {m}m"
+        if h:
+            return f"{h}h {m}m"
+        return f"{m}m"
+    except Exception:
+        return s
 
 
-def _fmt_uptime(ticks):
-    if ticks is None:
-        return "Unknown"
-    secs = int(ticks.total_seconds()) if isinstance(ticks, datetime.timedelta) else int(ticks) // 100
-    d, secs = divmod(secs, 86400)
-    h, secs = divmod(secs, 3600)
-    m = secs // 60
-    if d:
-        return f"{d}d {h}h {m}m"
-    if h:
-        return f"{h}h {m}m"
-    return f"{m}m"
+def _int(val: str) -> int | None:
+    """Parse integer from net-snmp value, handling enum 'name(N)' format."""
+    v = val.strip()
+    if v.lstrip("-").isdigit():
+        return int(v)
+    if "(" in v:
+        try:
+            return int(v[v.rfind("(") + 1:v.rfind(")")])
+        except (ValueError, IndexError):
+            pass
+    return None
 
 
-def _fmt_mac(mac_bytes) -> str:
-    if isinstance(mac_bytes, bytes) and len(mac_bytes) == 6:
-        return ":".join(f"{b:02x}" for b in mac_bytes)
-    return str(mac_bytes)
+def _fmt_mac_hex(val: str) -> str:
+    """Parse a MAC from net-snmp Hex-STRING value '00 11 22 33 44 55'."""
+    h = val.replace(" ", "").replace(":", "")
+    if len(h) == 12 and all(c in "0123456789abcdefABCDEF" for c in h):
+        return ":".join(h[i:i+2].lower() for i in range(0, 12, 2))
+    return ""
 
 
 def _port_sort_key(entry: dict):
-    """Sort '1/g3' numerically by slot then port."""
-    port = entry["port"].replace("/g", "/")
+    port  = entry["port"].replace("/g", "/")
     parts = port.split("/")
     try:
         return (int(parts[0]), int(parts[1]))
@@ -44,55 +111,48 @@ def _port_sort_key(entry: dict):
         return (0, 0)
 
 
-async def _build_port_map(client) -> list:
-    """Return a list of {port, mac, ip} for each learned FDB entry."""
-
-    # ifIndex → port name via ifName (IF-MIB)
+def _build_port_map(target: str, args: list) -> list:
+    # ifIndex → port name (ifName)
     ifidx_to_name = {}
-    try:
-        async for item in client.walk("1.3.6.1.2.1.31.1.1.1.1"):
-            ifidx = int(str(item.oid).split(".")[-1])
-            ifidx_to_name[ifidx] = _str(item.value)
-    except Exception:
-        pass
+    for oid, val in _walk(target, args, "1.3.6.1.2.1.31.1.1.1.1"):
+        ifidx = int(oid.split(".")[-1])
+        ifidx_to_name[ifidx] = val
 
-    # ARP table: MAC → IP  (ipNetToMediaPhysAddress; OID suffix = ifIndex.a.b.c.d)
+    # ARP table: MAC → IP  (OID suffix = ifIndex.a.b.c.d, value = Hex-STRING MAC)
     mac_to_ip = {}
-    try:
-        async for item in client.walk("1.3.6.1.2.1.4.22.1.2"):
-            oid_parts = str(item.oid).split(".")
-            ip = ".".join(oid_parts[-4:])
-            mac = _fmt_mac(item.value)
-            if mac != str(item.value):   # only store if formatting succeeded
+    for oid, val in _walk(target, args, "1.3.6.1.2.1.4.22.1.2"):
+        parts = oid.split(".")
+        if len(parts) >= 4:
+            ip  = ".".join(parts[-4:])
+            mac = _fmt_mac_hex(val)
+            if mac:
                 mac_to_ip[mac] = ip
-    except Exception:
-        pass
 
-    # FDB port: MAC (from OID suffix) → bridge port number
+    # FDB port: OID suffix = MAC decimal octets, value = bridge port number
     fdb_ports = {}
-    try:
-        async for item in client.walk("1.3.6.1.2.1.17.4.3.1.2"):
-            oid_parts = str(item.oid).split(".")
-            mac = ":".join(f"{int(x):02x}" for x in oid_parts[-6:])
-            fdb_ports[mac] = int(item.value)
-    except Exception:
-        pass
+    for oid, val in _walk(target, args, "1.3.6.1.2.1.17.4.3.1.2"):
+        parts = oid.split(".")
+        if len(parts) >= 6:
+            mac = ":".join(f"{int(x):02x}" for x in parts[-6:])
+            n = _int(val)
+            if n is not None:
+                fdb_ports[mac] = n
 
-    # FDB status: 3 = learned (dynamic), others = static/self/invalid
+    # FDB status: 3 = learned (dynamic)
     fdb_status = {}
-    try:
-        async for item in client.walk("1.3.6.1.2.1.17.4.3.1.3"):
-            oid_parts = str(item.oid).split(".")
-            mac = ":".join(f"{int(x):02x}" for x in oid_parts[-6:])
-            fdb_status[mac] = int(item.value)
-    except Exception:
-        pass
+    for oid, val in _walk(target, args, "1.3.6.1.2.1.17.4.3.1.3"):
+        parts = oid.split(".")
+        if len(parts) >= 6:
+            mac = ":".join(f"{int(x):02x}" for x in parts[-6:])
+            n = _int(val)
+            if n is not None:
+                fdb_status[mac] = n
 
     entries = []
     for mac, bridge_port in fdb_ports.items():
-        if fdb_status.get(mac) != 3:              # skip non-learned
+        if fdb_status.get(mac) != 3:
             continue
-        if int(mac.split(":")[0], 16) & 1:        # skip multicast/broadcast
+        if int(mac.split(":")[0], 16) & 1:      # skip multicast/broadcast
             continue
         port_name = ifidx_to_name.get(bridge_port, f"port{bridge_port}")
         entries.append({"port": port_name, "mac": mac, "ip": mac_to_ip.get(mac, "")})
@@ -101,71 +161,42 @@ async def _build_port_map(client) -> list:
     return entries
 
 
-async def _collect(host: str, creds, port: int) -> dict:
-    client = PyWrapper(Client(host, creds, port=port))
+def collect_snmp(host_config: dict) -> dict:
+    if not shutil.which("snmpget"):
+        raise RuntimeError("net-snmp not found — install with: sudo pacman -S net-snmp")
 
-    async def get(oid):
-        try:
-            return await client.get(oid)
-        except Exception:
-            return None
+    host   = host_config["host"]
+    port   = host_config.get("snmp_port", 161)
+    target = f"{host}:{port}"
+    args   = _snmp_base_args(host_config)
 
-    async def walk(oid):
-        try:
-            results = []
-            async for item in client.walk(oid):
-                results.append(item.value if hasattr(item, "value") else item)
-            return results
-        except Exception:
-            return []
+    hostname = _get(target, args, "1.3.6.1.2.1.1.5.0") or host
+    descr    = _get(target, args, "1.3.6.1.2.1.1.1.0") or "Unknown"
+    uptime   = _fmt_uptime(_get(target, args, "1.3.6.1.2.1.1.3.0") or "")
 
-    hostname = _str(await get("1.3.6.1.2.1.1.5.0"))
-    descr    = _str(await get("1.3.6.1.2.1.1.1.0"))
-    uptime   = _fmt_uptime(await get("1.3.6.1.2.1.1.3.0"))
+    if_types_raw    = _walk(target, args, "1.3.6.1.2.1.2.2.1.3")
+    if_statuses_raw = _walk(target, args, "1.3.6.1.2.1.2.2.1.8")
 
-    ip_address = host  # switch ARP table is unreliable; use configured IP
+    if_types    = [n for _, v in if_types_raw    if (n := _int(v)) is not None]
+    if_statuses = [n for _, v in if_statuses_raw if (n := _int(v)) is not None]
 
-    if_types    = [int(v) for v in await walk("1.3.6.1.2.1.2.2.1.3")]
-    if_statuses = [int(v) for v in await walk("1.3.6.1.2.1.2.2.1.8")]
-    physical    = [
-        st for ty, st in zip(if_types, if_statuses)
-        if ty in _PHYSICAL_TYPES and st != 6   # exclude notPresent slots
-    ]
+    physical    = [st for ty, st in zip(if_types, if_statuses)
+                   if ty in _PHYSICAL_TYPES and st != 6]
     ports_up    = sum(1 for s in physical if s == 1)
     ports_total = len(physical)
     ports       = f"{ports_up}/{ports_total} up" if ports_total else "Unknown"
 
-    mac_table   = await walk("1.3.6.1.2.1.17.4.3.1.1")
+    mac_table   = _walk(target, args, "1.3.6.1.2.1.17.4.3.1.1")
     mac_entries = str(len(mac_table)) if mac_table else "Unknown"
 
-    port_map = await _build_port_map(client)
+    port_map = _build_port_map(target, args)
 
     return {
-        "hostname":    hostname if hostname not in ("Unknown", "") else host,
+        "hostname":    hostname,
         "description": descr,
         "uptime":      uptime,
-        "ip_address":  ip_address,
+        "ip_address":  host,
         "ports":       ports,
         "mac_entries": mac_entries,
         "port_map":    port_map,
     }
-
-
-def _credentials(host_config: dict):
-    """Return V3 credentials if snmp_user is set, otherwise V2C community string."""
-    if host_config.get("snmp_user"):
-        auth_key   = host_config.get("auth_key", "")
-        priv_key   = host_config.get("priv_key", "")
-        auth_proto = host_config.get("auth_proto", "sha").lower()
-        priv_proto = host_config.get("priv_proto", "aes").lower()
-        auth = Auth(key=auth_key.encode(), method=auth_proto) if auth_key else None
-        priv = Priv(key=priv_key.encode(), method=priv_proto) if (priv_key and auth) else None
-        return V3(username=host_config["snmp_user"], auth=auth, priv=priv)
-    return V2C(host_config.get("community", "public"))
-
-
-def collect_snmp(host_config: dict) -> dict:
-    host  = host_config["host"]
-    port  = host_config.get("snmp_port", 161)
-    creds = _credentials(host_config)
-    return asyncio.run(_collect(host, creds, port))

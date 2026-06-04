@@ -8,7 +8,7 @@ Homelab inventory scanner. Connects to Linux, macOS, Windows, and network applia
 - **macOS hosts** — hostname, OS version, kernel, CPU, memory, disk, uptime, Homebrew package count
 - **Windows hosts** — hostname, OS, CPU, memory, disk, IP, uptime, running third-party services (Microsoft/Windows built-ins filtered out); requires OpenSSH Server
 - **Network appliances** — hostname, platform, uptime, IP addresses, routing table, ARP count; SSH-based, works with pfSense, OPNsense, OpenWrt, TP-Link Omada APs
-- **Managed switches** — model, firmware, serial, uptime, management IP, port status summary (up/total), MAC table entry count; interactive CLI collector for Netgear ProSAFE-style switches
+- **Managed switches (SNMP)** — hostname, description, uptime, port status (up/total), MAC table entry count, and a full port map (port → MAC → IP) cross-referencing FDB and ARP tables; works with any SNMPv2c or SNMPv3 device; requires `net-snmp` on the scanning machine
 - **Proxmox hosts** — node stats, all VMs and LXC containers (status, CPUs, memory, uptime), storage pools
 - **Role-based organization** — inventory and report are grouped into Servers, Workstations, Network Equipment
 - **Parallel scanning** — all hosts scanned concurrently via a thread pool
@@ -89,9 +89,28 @@ Any device running standard Unix commands over SSH works out of the box. Command
 
 If your network device has a descriptive host type name (e.g. `firewall`, `router`, `ap`), add `collector: network` so Crandle knows which collector to use. See [SETUP.md](SETUP.md) for SSH setup instructions for OPNsense and TP-Link Omada APs.
 
-### Managed switches (Netgear ProSAFE / GS748TS)
+### Managed switches (SNMP)
 
-The `switch` collector uses an interactive PTY session to speak the ProSAFE CLI. No `collector:` key needed — `switch` host types route to it automatically. See [SETUP.md](SETUP.md) for full setup instructions.
+The `snmp` collector uses `snmpget`/`snmpwalk` from the system `net-snmp` package — install with `sudo pacman -S net-snmp` (or your distro equivalent). Supports SNMPv2c (community string) and SNMPv3 (authNoPriv with SHA). See [SETUP.md](SETUP.md) for full setup instructions including the Netgear GS748TS SNMPv3 VACM walkthrough.
+
+**SNMPv2c:**
+```yaml
+network:
+  switch:
+    - host: 192.168.1.2
+      community: public
+      collector: snmp
+```
+
+**SNMPv3 (authNoPriv):**
+```yaml
+network:
+  switch:
+    - host: 192.168.1.2
+      snmp_user: crandle
+      auth_key: your_passphrase
+      collector: snmp
+```
 
 ## Usage
 
@@ -160,7 +179,8 @@ collectors/
   macos.py              # SSH: system info, Homebrew
   network.py            # SSH: hostname, platform, routing (pfSense/OPNsense/OpenWrt/Omada AP)
   proxmox.py            # Proxmox API: nodes, VMs, LXC, storage
-  switch.py             # Interactive CLI: Netgear ProSAFE managed switches
+  snmp.py               # net-snmp CLI wrapper: SNMP v2c/v3 switches (port map, FDB, ARP)
+  switch.py             # Interactive CLI: Netgear ProSAFE managed switches (SSH/PTY)
   windows.py            # SSH + PowerShell: system info, third-party services
 utils/
   ssh.py                # Paramiko connection helper (key → password fallback, thread-safe)
