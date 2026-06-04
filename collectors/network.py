@@ -35,12 +35,11 @@ def collect_network(client):
             "grep 'model name' /proc/cpuinfo 2>/dev/null | head -1 | cut -d: -f2 | sed 's/^ //'",
         ),
         "memory":        _try(
-            "sysctl -n hw.physmem 2>/dev/null | awk '{printf \"%.1f GB total\", $1/1073741824}'",
+            # BSD: compute used = total - (free_pages * page_size)
+            "sysctl -n hw.physmem vm.stats.vm.v_free_count hw.pagesize 2>/dev/null"
+            " | awk 'NR==1{t=$1} NR==2{f=$1} NR==3{s=$1}"
+            " END{printf \"%.1f GB used / %.1f GB total\", (t-f*s)/1073741824, t/1073741824}'",
             "grep MemTotal /proc/meminfo 2>/dev/null | awk '{printf \"%.1f GB total\", $2/1048576}'",
-        ),
-        "memory_detail": _try(
-            # BSD vmstat: pages free/active/inactive/wired
-            "vmstat 2>/dev/null | tail -1 | awk '{print \"free:\"$5\" active:\"$6\" inactive:\"$7\" wired:\"$8}' | sed 's/[A-Z]//g'",
         ),
         "disk_root":     _try(
             "df -h / 2>/dev/null | awk 'NR==2{print $3\" used / \"$2\" total (\"$5\")\"}'"

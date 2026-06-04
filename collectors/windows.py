@@ -7,7 +7,7 @@ def collect_windows(client):
         "os":             "powershell -Command \"(Get-CimInstance Win32_OperatingSystem).Caption\"",
         "version":        "powershell -Command \"(Get-CimInstance Win32_OperatingSystem).Version\"",
         "uptime":         "powershell -Command \"$b=(Get-CimInstance Win32_OperatingSystem).LastBootUpTime; $s=(Get-Date)-$b; \\\"$($s.Days)d $($s.Hours)h $($s.Minutes)m\\\"\"",
-        "cpu":            "powershell -Command \"(Get-CimInstance Win32_Processor).Name\"",
+        "cpu":            "powershell -Command \"(Get-CimInstance Win32_Processor | Select-Object -First 1).Name\"",
         "cpu_cores":      "powershell -Command \"(Get-CimInstance Win32_Processor | Measure-Object -Property NumberOfCores -Sum).Sum\"",
         "cpu_threads":    "powershell -Command \"(Get-CimInstance Win32_Processor | Measure-Object -Property NumberOfLogicalProcessors -Sum).Sum\"",
         "gpu":            "powershell -Command \"(Get-CimInstance Win32_VideoController | Where-Object {$_.Name -notlike '*Basic*' -and $_.Name -notlike '*Generic*'}).Name -join ', '\"",
