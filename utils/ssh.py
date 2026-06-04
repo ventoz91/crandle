@@ -11,6 +11,10 @@ def connect(host: str, username: str):
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
+    # Re-enable all legacy algorithms (kex, host keys, ciphers, MACs) for older
+    # embedded devices that only offer dh-group1-sha1 / ssh-rsa / aes-cbc etc.
+    _legacy = {"disabled_algorithms": {"pubkeys": [], "kex": [], "ciphers": [], "macs": []}}
+
     try:
         client.connect(
             hostname=host,
@@ -18,6 +22,7 @@ def connect(host: str, username: str):
             timeout=10,
             look_for_keys=True,
             allow_agent=True,
+            **_legacy,
         )
         print(f"[OK] SSH key auth succeeded for {host}")
         return client
@@ -35,6 +40,7 @@ def connect(host: str, username: str):
             password=password_cache[username],
             timeout=10,
             look_for_keys=False,
+            **_legacy,
         )
         print(f"[OK] Password auth succeeded for {host}")
         return client

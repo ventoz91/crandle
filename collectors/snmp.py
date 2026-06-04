@@ -172,7 +172,13 @@ def collect_snmp(host_config: dict) -> dict:
 
     hostname = _get(target, args, "1.3.6.1.2.1.1.5.0") or host
     descr    = _get(target, args, "1.3.6.1.2.1.1.1.0") or "Unknown"
-    uptime   = _fmt_uptime(_get(target, args, "1.3.6.1.2.1.1.3.0") or "")
+    # hrSystemUptime (HOST-RESOURCES-MIB) = time since last boot; sysUpTime = time
+    # since SNMP agent started (useless on devices where SNMP was just enabled).
+    uptime   = _fmt_uptime(
+        _get(target, args, "1.3.6.1.2.1.25.1.1.0")
+        or _get(target, args, "1.3.6.1.2.1.1.3.0")
+        or ""
+    )
     contact  = _get(target, args, "1.3.6.1.2.1.1.4.0") or ""
     location = _get(target, args, "1.3.6.1.2.1.1.6.0") or ""
 
@@ -189,7 +195,7 @@ def collect_snmp(host_config: dict) -> dict:
     ports       = f"{ports_up}/{ports_total} up" if ports_total else "Unknown"
 
     mac_table   = _walk(target, args, "1.3.6.1.2.1.17.4.3.1.1")
-    mac_entries = str(len(mac_table)) if mac_table else "Unknown"
+    mac_entries = str(len(mac_table)) if mac_table else "N/A"
 
     # VLAN names (dot1qVlanStaticName — Q-BRIDGE-MIB)
     vlan_raw  = _walk(target, args, "1.3.6.1.2.1.17.7.1.4.3.1.1")
