@@ -72,7 +72,7 @@ def _guest_ips(proxmox, node_name, vmid) -> str:
             for addr in iface.get("ip-addresses", []):
                 if addr.get("ip-address-type") == "ipv4":
                     ip = addr.get("ip-address", "")
-                    if ip:
+                    if ip and not ip.startswith("127."):
                         ips.append(ip)
         return ", ".join(ips)
     except Exception:
