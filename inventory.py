@@ -140,11 +140,19 @@ def snmp_to_markdown(data):
         "ip_address": "IP Address", "ports": "Ports", "mac_entries": "MAC Table Entries",
     }
     for key, value in data.items():
-        if key == "hostname":
+        if key in ("hostname", "port_map"):
             continue
         label = labels.get(key, key.replace("_", " ").title())
         md.append(f"| {label} | {value} |")
-    md += ["", "---", ""]
+    md.append("")
+
+    if data.get("port_map"):
+        md += ["### Port Map", "", "| Port | MAC | IP |", "|------|-----|-----|"]
+        for entry in data["port_map"]:
+            md.append(f"| {entry['port']} | {entry['mac']} | {entry.get('ip', '')} |")
+        md.append("")
+
+    md += ["---", ""]
     return "\n".join(md)
 
 
@@ -301,11 +309,20 @@ def display_snmp(data):
         "ip_address": "IP Address", "ports": "Ports", "mac_entries": "MAC Table Entries",
     }
     for key, value in data.items():
-        if key == "hostname":
+        if key in ("hostname", "port_map"):
             continue
         label = labels.get(key, key.replace("_", " ").title())
         table.add_row(label, str(value))
     console.print(table)
+
+    if data.get("port_map"):
+        port_table = Table(title=f"Port Map: {data['hostname']}")
+        port_table.add_column("Port")
+        port_table.add_column("MAC")
+        port_table.add_column("IP")
+        for entry in data["port_map"]:
+            port_table.add_row(entry["port"], entry["mac"], entry.get("ip", ""))
+        console.print(port_table)
 
 
 def display_switch(data):

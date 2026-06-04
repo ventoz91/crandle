@@ -28,6 +28,79 @@ def _fmt_uptime(ticks):
     return f"{m}m"
 
 
+def _fmt_mac(mac_bytes) -> str:
+    if isinstance(mac_bytes, bytes) and len(mac_bytes) == 6:
+        return ":".join(f"{b:02x}" for b in mac_bytes)
+    return str(mac_bytes)
+
+
+def _port_sort_key(entry: dict):
+    """Sort '1/g3' numerically by slot then port."""
+    port = entry["port"].replace("/g", "/")
+    parts = port.split("/")
+    try:
+        return (int(parts[0]), int(parts[1]))
+    except (ValueError, IndexError):
+        return (0, 0)
+
+
+async def _build_port_map(client) -> list:
+    """Return a list of {port, mac, ip} for each learned FDB entry."""
+
+    # ifIndex → port name via ifName (IF-MIB)
+    ifidx_to_name = {}
+    try:
+        async for item in client.walk("1.3.6.1.2.1.31.1.1.1.1"):
+            ifidx = int(str(item.oid).split(".")[-1])
+            ifidx_to_name[ifidx] = _str(item.value)
+    except Exception:
+        pass
+
+    # ARP table: MAC → IP  (ipNetToMediaPhysAddress; OID suffix = ifIndex.a.b.c.d)
+    mac_to_ip = {}
+    try:
+        async for item in client.walk("1.3.6.1.2.1.4.22.1.2"):
+            oid_parts = str(item.oid).split(".")
+            ip = ".".join(oid_parts[-4:])
+            mac = _fmt_mac(item.value)
+            if mac != str(item.value):   # only store if formatting succeeded
+                mac_to_ip[mac] = ip
+    except Exception:
+        pass
+
+    # FDB port: MAC (from OID suffix) → bridge port number
+    fdb_ports = {}
+    try:
+        async for item in client.walk("1.3.6.1.2.1.17.4.3.1.2"):
+            oid_parts = str(item.oid).split(".")
+            mac = ":".join(f"{int(x):02x}" for x in oid_parts[-6:])
+            fdb_ports[mac] = int(item.value)
+    except Exception:
+        pass
+
+    # FDB status: 3 = learned (dynamic), others = static/self/invalid
+    fdb_status = {}
+    try:
+        async for item in client.walk("1.3.6.1.2.1.17.4.3.1.3"):
+            oid_parts = str(item.oid).split(".")
+            mac = ":".join(f"{int(x):02x}" for x in oid_parts[-6:])
+            fdb_status[mac] = int(item.value)
+    except Exception:
+        pass
+
+    entries = []
+    for mac, bridge_port in fdb_ports.items():
+        if fdb_status.get(mac) != 3:              # skip non-learned
+            continue
+        if int(mac.split(":")[0], 16) & 1:        # skip multicast/broadcast
+            continue
+        port_name = ifidx_to_name.get(bridge_port, f"port{bridge_port}")
+        entries.append({"port": port_name, "mac": mac, "ip": mac_to_ip.get(mac, "")})
+
+    entries.sort(key=_port_sort_key)
+    return entries
+
+
 async def _collect(host: str, community: str, port: int) -> dict:
     client = PyWrapper(Client(host, V2C(community), port=port))
 
@@ -46,20 +119,17 @@ async def _collect(host: str, community: str, port: int) -> dict:
         except Exception:
             return []
 
-    hostname = _str(await get("1.3.6.1.2.1.1.5.0"))          # sysName
-    descr    = _str(await get("1.3.6.1.2.1.1.1.0"))          # sysDescr
-    uptime   = _fmt_uptime(await get("1.3.6.1.2.1.1.3.0"))   # sysUpTime
+    hostname = _str(await get("1.3.6.1.2.1.1.5.0"))
+    descr    = _str(await get("1.3.6.1.2.1.1.1.0"))
+    uptime   = _fmt_uptime(await get("1.3.6.1.2.1.1.3.0"))
 
-    # Use the configured host IP — SNMP ipAdEntAddr returns unreliable values on some switches
-    ip_address = host
+    ip_address = host  # switch ARP table is unreliable; use configured IP
 
-    # Port status: filter to physical Ethernet (ifType=6/117), exclude notPresent (status=6)
-    # notPresent = empty port slot; filtering it out gives only populated/cabled ports
-    if_types    = [int(v) for v in await walk("1.3.6.1.2.1.2.2.1.3")]   # ifType
-    if_statuses = [int(v) for v in await walk("1.3.6.1.2.1.2.2.1.8")]   # ifOperStatus
+    if_types    = [int(v) for v in await walk("1.3.6.1.2.1.2.2.1.3")]
+    if_statuses = [int(v) for v in await walk("1.3.6.1.2.1.2.2.1.8")]
     physical    = [
         st for ty, st in zip(if_types, if_statuses)
-        if ty in _PHYSICAL_TYPES and st != 6
+        if ty in _PHYSICAL_TYPES and st != 6   # exclude notPresent slots
     ]
     ports_up    = sum(1 for s in physical if s == 1)
     ports_total = len(physical)
@@ -68,6 +138,8 @@ async def _collect(host: str, community: str, port: int) -> dict:
     mac_table   = await walk("1.3.6.1.2.1.17.4.3.1.1")
     mac_entries = str(len(mac_table)) if mac_table else "Unknown"
 
+    port_map = await _build_port_map(client)
+
     return {
         "hostname":    hostname if hostname not in ("Unknown", "") else host,
         "description": descr,
@@ -75,6 +147,7 @@ async def _collect(host: str, community: str, port: int) -> dict:
         "ip_address":  ip_address,
         "ports":       ports,
         "mac_entries": mac_entries,
+        "port_map":    port_map,
     }
 
 
