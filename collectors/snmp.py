@@ -173,6 +173,8 @@ def collect_snmp(host_config: dict) -> dict:
     hostname = _get(target, args, "1.3.6.1.2.1.1.5.0") or host
     descr    = _get(target, args, "1.3.6.1.2.1.1.1.0") or "Unknown"
     uptime   = _fmt_uptime(_get(target, args, "1.3.6.1.2.1.1.3.0") or "")
+    contact  = _get(target, args, "1.3.6.1.2.1.1.4.0") or ""
+    location = _get(target, args, "1.3.6.1.2.1.1.6.0") or ""
 
     if_types_raw    = _walk(target, args, "1.3.6.1.2.1.2.2.1.3")
     if_statuses_raw = _walk(target, args, "1.3.6.1.2.1.2.2.1.8")
@@ -189,14 +191,49 @@ def collect_snmp(host_config: dict) -> dict:
     mac_table   = _walk(target, args, "1.3.6.1.2.1.17.4.3.1.1")
     mac_entries = str(len(mac_table)) if mac_table else "Unknown"
 
+    # VLAN names (dot1qVlanStaticName — Q-BRIDGE-MIB)
+    vlan_raw  = _walk(target, args, "1.3.6.1.2.1.17.7.1.4.3.1.1")
+    vlan_list = []
+    for oid, val in vlan_raw:
+        vlan_id = oid.split(".")[-1]
+        vlan_list.append({"id": vlan_id, "name": val})
+
     port_map = _build_port_map(target, args)
+
+    # Add interface speed to port_map entries
+    if_speed_raw = _walk(target, args, "1.3.6.1.2.1.2.2.1.5")  # ifSpeed (bps)
+    ifidx_to_speed = {}
+    for oid, val in if_speed_raw:
+        ifidx = int(oid.split(".")[-1])
+        n = _int(val)
+        if n is not None and n > 0:
+            if n >= 1_000_000_000:
+                ifidx_to_speed[ifidx] = f"{n // 1_000_000_000}G"
+            elif n >= 1_000_000:
+                ifidx_to_speed[ifidx] = f"{n // 1_000_000}M"
+            else:
+                ifidx_to_speed[ifidx] = f"{n // 1_000}K"
+
+    # Re-walk ifName to map port name → ifIndex for speed lookup
+    ifname_raw = _walk(target, args, "1.3.6.1.2.1.31.1.1.1.1")
+    name_to_ifidx = {}
+    for oid, val in ifname_raw:
+        ifidx = int(oid.split(".")[-1])
+        name_to_ifidx[val] = ifidx
+
+    for entry in port_map:
+        ifidx = name_to_ifidx.get(entry["port"])
+        entry["speed"] = ifidx_to_speed.get(ifidx, "") if ifidx else ""
 
     return {
         "hostname":    hostname,
         "description": descr,
         "uptime":      uptime,
         "ip_address":  host,
+        "contact":     contact,
+        "location":    location,
         "ports":       ports,
         "mac_entries": mac_entries,
+        "vlan_list":   vlan_list,
         "port_map":    port_map,
     }

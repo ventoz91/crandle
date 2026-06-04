@@ -36,14 +36,23 @@ def _status_style(status: str) -> str:
 # Markdown renderers  (## for host, ### for subsections, #### for sub-sub)
 # ---------------------------------------------------------------------------
 
+_LINUX_SKIP = {"hostname", "docker_containers", "failed_services", "all_disks"}
+
 def linux_to_markdown(data):
     md = [f"## {data['hostname']}", ""]
     md += ["| Property | Value |", "|----------|-------|"]
     for key, value in data.items():
-        if key in ("hostname", "docker_containers", "failed_services"):
+        if key in _LINUX_SKIP:
             continue
         md.append(f"| {key} | {value} |")
     md.append("")
+
+    if data.get("all_disks"):
+        md += ["### Disks", "", "| Device | Used | Total | Use% | Mount |",
+               "|--------|------|-------|------|-------|"]
+        for d in data["all_disks"]:
+            md.append(f"| {d['device']} | {d['used']} | {d['total']} | {d['pct']} | {d['mount']} |")
+        md.append("")
 
     if data.get("failed_services"):
         md += ["### Failed Services", "", f"```\n{data['failed_services']}\n```", ""]
@@ -62,59 +71,99 @@ def linux_to_markdown(data):
     return "\n".join(md)
 
 
+_MACOS_SKIP = {"hostname", "all_disks"}
+
 def macos_to_markdown(data):
     md = [f"## {data['hostname']} (macOS)", ""]
     md += ["| Property | Value |", "|----------|-------|"]
     for key, value in data.items():
-        if key == "hostname":
+        if key in _MACOS_SKIP:
             continue
         md.append(f"| {key} | {value} |")
-    md += ["", "---", ""]
+    md.append("")
+
+    if data.get("all_disks"):
+        md += ["### Disks", "", "| Device | Used | Total | Use% | Mount |",
+               "|--------|------|-------|------|-------|"]
+        for d in data["all_disks"]:
+            md.append(f"| {d['device']} | {d['used']} | {d['total']} | {d['pct']} | {d['mount']} |")
+        md.append("")
+
+    md += ["---", ""]
     return "\n".join(md)
 
+
+_NETWORK_SKIP = {"hostname", "interface_table"}
 
 def network_to_markdown(data):
     md = [f"## {data.get('hostname', 'Network Device')}", ""]
     md += ["| Property | Value |", "|----------|-------|"]
     for key, value in data.items():
-        if key == "hostname":
+        if key in _NETWORK_SKIP:
             continue
         label = key.replace("_", " ").title()
         md.append(f"| {label} | {value} |")
-    md += ["", "---", ""]
+    md.append("")
+
+    if data.get("interface_table"):
+        md += ["### Interfaces", "", "| Interface | Status | Addresses |",
+               "|-----------|--------|-----------|"]
+        for iface in data["interface_table"]:
+            md.append(f"| {iface['interface']} | {iface['status']} | {iface['addresses']} |")
+        md.append("")
+
+    md += ["---", ""]
     return "\n".join(md)
 
 
 def proxmox_to_markdown(data):
     md = [f"## Proxmox — {data['host']}", ""]
+    if data.get("api_version"):
+        md.append(f"API version: {data['api_version']}")
+        md.append("")
 
     for node in data["nodes"]:
+        extras = []
+        if node.get("pve_version"):
+            extras.append(f"PVE: {node['pve_version']}")
+        if node.get("kernel"):
+            extras.append(f"Kernel: {node['kernel']}")
+        if node.get("cpu_model"):
+            extras.append(f"CPU: {node['cpu_model']} ({node.get('cpu_count', '')} threads)")
+
         md += [
             f"### Node: {node['name']}", "",
             f"- Status: {node['status']}",
             f"- CPU Usage: {node['cpu']}",
             f"- Memory: {node['memory_used']} / {node['memory_total']}",
             f"- Disk: {node['disk_used']} / {node['disk_total']}",
-            f"- Uptime: {node['uptime']}", "",
+            f"- Uptime: {node['uptime']}",
+        ]
+        for e in extras:
+            md.append(f"- {e}")
+        md += [
+            "",
             "#### Virtual Machines", "",
-            "| VMID | Name | Status | CPUs | Memory | Uptime |",
-            "|------|------|--------|------|--------|--------|",
+            "| VMID | Name | Status | Tags | CPUs | Memory | Uptime | Snapshots | Guest IPs |",
+            "|------|------|--------|------|------|--------|--------|-----------|-----------|",
         ]
         for vm in node["vms"]:
             md.append(
-                f"| {vm['vmid']} | {vm['name']} | {vm['status']} |"
+                f"| {vm['vmid']} | {vm['name']} | {vm['status']} | {vm.get('tags','')} |"
                 f" {vm['cpus']} | {vm['memory']} / {vm['max_memory']} | {vm['uptime']} |"
+                f" {vm.get('snapshots', '')} | {vm.get('guest_ips', '')} |"
             )
         md += [
             "",
             "#### LXC Containers", "",
-            "| VMID | Name | Status | CPUs | Memory | Uptime |",
-            "|------|------|--------|------|--------|--------|",
+            "| VMID | Name | Status | Tags | CPUs | Memory | Uptime | IP |",
+            "|------|------|--------|------|------|--------|--------|----|",
         ]
         for ct in node["lxc"]:
             md.append(
-                f"| {ct['vmid']} | {ct['name']} | {ct['status']} |"
+                f"| {ct['vmid']} | {ct['name']} | {ct['status']} | {ct.get('tags','')} |"
                 f" {ct['cpus']} | {ct['memory']} / {ct['max_memory']} | {ct['uptime']} |"
+                f" {ct.get('ip', '')} |"
             )
         md += [
             "",
@@ -132,24 +181,34 @@ def proxmox_to_markdown(data):
     return "\n".join(md)
 
 
+_SNMP_SKIP   = {"hostname", "port_map", "vlan_list"}
+_SNMP_LABELS = {
+    "description": "Description", "uptime": "Uptime", "ip_address": "IP Address",
+    "contact": "Contact", "location": "Location",
+    "ports": "Ports", "mac_entries": "MAC Table Entries",
+}
+
 def snmp_to_markdown(data):
     md = [f"## {data['hostname']} (switch/snmp)", ""]
     md += ["| Property | Value |", "|----------|-------|"]
-    labels = {
-        "description": "Description", "uptime": "Uptime",
-        "ip_address": "IP Address", "ports": "Ports", "mac_entries": "MAC Table Entries",
-    }
     for key, value in data.items():
-        if key in ("hostname", "port_map"):
+        if key in _SNMP_SKIP:
             continue
-        label = labels.get(key, key.replace("_", " ").title())
+        label = _SNMP_LABELS.get(key, key.replace("_", " ").title())
         md.append(f"| {label} | {value} |")
     md.append("")
 
+    if data.get("vlan_list"):
+        md += ["### VLANs", "", "| VLAN ID | Name |", "|---------|------|"]
+        for v in data["vlan_list"]:
+            md.append(f"| {v['id']} | {v['name']} |")
+        md.append("")
+
     if data.get("port_map"):
-        md += ["### Port Map", "", "| Port | MAC | IP |", "|------|-----|-----|"]
+        md += ["### Port Map", "", "| Port | Speed | MAC | IP |",
+               "|------|-------|-----|-----|"]
         for entry in data["port_map"]:
-            md.append(f"| {entry['port']} | {entry['mac']} | {entry.get('ip', '')} |")
+            md.append(f"| {entry['port']} | {entry.get('speed','')} | {entry['mac']} | {entry.get('ip', '')} |")
         md.append("")
 
     md += ["---", ""]
@@ -173,14 +232,30 @@ def switch_to_markdown(data):
     return "\n".join(md)
 
 
+_WIN_SKIP = {"hostname", "running_services", "all_drives", "network_adapters"}
+
 def windows_to_markdown(data):
     md = [f"## {data['hostname']} (Windows)", ""]
     md += ["| Property | Value |", "|----------|-------|"]
     for key, value in data.items():
-        if key == "running_services":
+        if key in _WIN_SKIP:
             continue
         md.append(f"| {key} | {value} |")
     md.append("")
+
+    if data.get("all_drives"):
+        md += ["### Drives", "", "| Drive | Used | Total |", "|-------|------|-------|"]
+        for d in data["all_drives"]:
+            md.append(f"| {d['drive']}: | {d['used']} | {d['total']} |")
+        md.append("")
+
+    if data.get("network_adapters"):
+        md += ["### Network Adapters", "",
+               "| Name | MAC | Speed | Description |",
+               "|------|-----|-------|-------------|"]
+        for a in data["network_adapters"]:
+            md.append(f"| {a['name']} | {a['mac']} | {a['speed']} | {a['description']} |")
+        md.append("")
 
     if data.get("running_services"):
         md += ["### Running Services (non-Microsoft)", ""]
@@ -205,10 +280,21 @@ def display_linux(data):
     table.add_column("Property")
     table.add_column("Value")
     for key, value in data.items():
-        if key in ("docker_containers", "failed_services"):
+        if key in _LINUX_SKIP:
             continue
         table.add_row(key, str(value))
     console.print(table)
+
+    if data.get("all_disks"):
+        disk_table = Table(title=f"Disks on {data['hostname']}")
+        disk_table.add_column("Device")
+        disk_table.add_column("Used")
+        disk_table.add_column("Total")
+        disk_table.add_column("Use%")
+        disk_table.add_column("Mount")
+        for d in data["all_disks"]:
+            disk_table.add_row(d["device"], d["used"], d["total"], d["pct"], d["mount"])
+        console.print(disk_table)
 
     if data.get("failed_services"):
         console.print(f"[red]  Failed services:[/red] {data['failed_services']}")
@@ -232,10 +318,21 @@ def display_macos(data):
     table.add_column("Property")
     table.add_column("Value")
     for key, value in data.items():
-        if key == "hostname":
+        if key in _MACOS_SKIP:
             continue
         table.add_row(key, str(value))
     console.print(table)
+
+    if data.get("all_disks"):
+        disk_table = Table(title=f"Disks on {data['hostname']}")
+        disk_table.add_column("Device")
+        disk_table.add_column("Used")
+        disk_table.add_column("Total")
+        disk_table.add_column("Use%")
+        disk_table.add_column("Mount")
+        for d in data["all_disks"]:
+            disk_table.add_row(d["device"], d["used"], d["total"], d["pct"], d["mount"])
+        console.print(disk_table)
 
 
 def display_network(data):
@@ -243,8 +340,21 @@ def display_network(data):
     table.add_column("Property")
     table.add_column("Value")
     for key, value in data.items():
+        if key in _NETWORK_SKIP:
+            continue
         table.add_row(key.replace("_", " ").title(), str(value))
     console.print(table)
+
+    if data.get("interface_table"):
+        iface_table = Table(title=f"Interfaces: {data.get('hostname', '')}")
+        iface_table.add_column("Interface")
+        iface_table.add_column("Status")
+        iface_table.add_column("Addresses")
+        for iface in data["interface_table"]:
+            status = iface["status"]
+            styled = f"[green]{status}[/green]" if "up" in status.lower() else f"[red]{status}[/red]"
+            iface_table.add_row(iface["interface"], styled, iface["addresses"])
+        console.print(iface_table)
 
 
 def display_proxmox(data):
@@ -252,24 +362,35 @@ def display_proxmox(data):
         table = Table(title=f"Proxmox Node: {node['name']}")
         table.add_column("Property")
         table.add_column("Value")
-        table.add_row("Status", _status_style(node["status"]))
-        table.add_row("CPU Usage", str(node["cpu"]))
-        table.add_row("Memory", f"{node['memory_used']} / {node['memory_total']}")
-        table.add_row("Disk", f"{node['disk_used']} / {node['disk_total']}")
-        table.add_row("Uptime", str(node["uptime"]))
+        table.add_row("Status",     _status_style(node["status"]))
+        table.add_row("CPU Usage",  str(node["cpu"]))
+        table.add_row("Memory",     f"{node['memory_used']} / {node['memory_total']}")
+        table.add_row("Disk",       f"{node['disk_used']} / {node['disk_total']}")
+        table.add_row("Uptime",     str(node["uptime"]))
+        if node.get("pve_version"):
+            table.add_row("PVE Version", str(node["pve_version"]))
+        if node.get("kernel"):
+            table.add_row("Kernel",      str(node["kernel"]))
+        if node.get("cpu_model"):
+            table.add_row("CPU",         f"{node['cpu_model']} ({node.get('cpu_count','')} threads)")
         console.print(table)
 
         vm_table = Table(title=f"VMs on {node['name']}")
         vm_table.add_column("VMID")
         vm_table.add_column("Name")
         vm_table.add_column("Status")
+        vm_table.add_column("Tags")
         vm_table.add_column("CPUs")
         vm_table.add_column("Memory")
         vm_table.add_column("Uptime")
+        vm_table.add_column("Snaps")
+        vm_table.add_column("Guest IPs")
         for vm in node["vms"]:
             vm_table.add_row(
                 str(vm["vmid"]), str(vm["name"]), _status_style(vm["status"]),
-                str(vm["cpus"]), f"{vm['memory']} / {vm['max_memory']}", str(vm["uptime"]),
+                str(vm.get("tags", "")), str(vm["cpus"]),
+                f"{vm['memory']} / {vm['max_memory']}", str(vm["uptime"]),
+                str(vm.get("snapshots", "")), str(vm.get("guest_ips", "")),
             )
         console.print(vm_table)
 
@@ -277,13 +398,17 @@ def display_proxmox(data):
         lxc_table.add_column("VMID")
         lxc_table.add_column("Name")
         lxc_table.add_column("Status")
+        lxc_table.add_column("Tags")
         lxc_table.add_column("CPUs")
         lxc_table.add_column("Memory")
         lxc_table.add_column("Uptime")
+        lxc_table.add_column("IP")
         for ct in node["lxc"]:
             lxc_table.add_row(
                 str(ct["vmid"]), str(ct["name"]), _status_style(ct["status"]),
-                str(ct["cpus"]), f"{ct['memory']} / {ct['max_memory']}", str(ct["uptime"]),
+                str(ct.get("tags", "")), str(ct["cpus"]),
+                f"{ct['memory']} / {ct['max_memory']}", str(ct["uptime"]),
+                str(ct.get("ip", "")),
             )
         console.print(lxc_table)
 
@@ -304,24 +429,29 @@ def display_snmp(data):
     table = Table(title=f"Switch: {data['hostname']} (SNMP)")
     table.add_column("Property")
     table.add_column("Value")
-    labels = {
-        "description": "Description", "uptime": "Uptime",
-        "ip_address": "IP Address", "ports": "Ports", "mac_entries": "MAC Table Entries",
-    }
     for key, value in data.items():
-        if key in ("hostname", "port_map"):
+        if key in _SNMP_SKIP:
             continue
-        label = labels.get(key, key.replace("_", " ").title())
+        label = _SNMP_LABELS.get(key, key.replace("_", " ").title())
         table.add_row(label, str(value))
     console.print(table)
+
+    if data.get("vlan_list"):
+        vlan_table = Table(title=f"VLANs: {data['hostname']}")
+        vlan_table.add_column("VLAN ID")
+        vlan_table.add_column("Name")
+        for v in data["vlan_list"]:
+            vlan_table.add_row(v["id"], v["name"])
+        console.print(vlan_table)
 
     if data.get("port_map"):
         port_table = Table(title=f"Port Map: {data['hostname']}")
         port_table.add_column("Port")
+        port_table.add_column("Speed")
         port_table.add_column("MAC")
         port_table.add_column("IP")
         for entry in data["port_map"]:
-            port_table.add_row(entry["port"], entry["mac"], entry.get("ip", ""))
+            port_table.add_row(entry["port"], entry.get("speed", ""), entry["mac"], entry.get("ip", ""))
         console.print(port_table)
 
 
@@ -347,10 +477,29 @@ def display_windows(data):
     table.add_column("Property")
     table.add_column("Value")
     for key, value in data.items():
-        if key == "running_services":
+        if key in _WIN_SKIP:
             continue
         table.add_row(key, str(value))
     console.print(table)
+
+    if data.get("all_drives"):
+        drive_table = Table(title=f"Drives on {data['hostname']}")
+        drive_table.add_column("Drive")
+        drive_table.add_column("Used")
+        drive_table.add_column("Total")
+        for d in data["all_drives"]:
+            drive_table.add_row(f"{d['drive']}:", d["used"], d["total"])
+        console.print(drive_table)
+
+    if data.get("network_adapters"):
+        adapter_table = Table(title=f"Network Adapters on {data['hostname']}")
+        adapter_table.add_column("Name")
+        adapter_table.add_column("MAC")
+        adapter_table.add_column("Speed")
+        adapter_table.add_column("Description")
+        for a in data["network_adapters"]:
+            adapter_table.add_row(a["name"], a["mac"], a["speed"], a["description"])
+        console.print(adapter_table)
 
     if data.get("running_services"):
         svc_table = Table(title=f"Running Services (non-Microsoft) on {data['hostname']}")
