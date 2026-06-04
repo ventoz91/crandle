@@ -220,7 +220,7 @@ If you want a friendly hostname in Crandle instead of the raw IP:
 
 This populates the `sysName` OID that Crandle reads for the hostname field.
 
-### 3. Add to inventory
+### 3. Add to inventory (SNMPv2c)
 
 ```yaml
 network:
@@ -229,3 +229,44 @@ network:
       community: public    # match whatever you set in the switch SNMP config
       collector: snmp
 ```
+
+### Upgrading to SNMPv3 (recommended)
+
+SNMPv3 adds authentication and encryption so the community string is never
+sent in plaintext. The GS748TS supports SHA auth + AES privacy.
+
+**Create an SNMPv3 user on the switch:**
+
+1. In the web GUI, go to the **SNMP** section
+2. Look for a **SNMPv3** tab or **SNMPv3 Users** submenu
+3. Add a new user:
+   - **User Name:** `crandle` (or any name)
+   - **Security Level:** `authPriv` (auth + encryption — most secure)
+   - **Authentication Protocol:** `SHA`
+   - **Authentication Key:** a passphrase of at least 8 characters
+   - **Privacy Protocol:** `AES`
+   - **Privacy Key:** a passphrase of at least 8 characters (can be different)
+   - **Access:** Read Only
+4. Save
+
+> Note: exact menu paths vary by firmware version. On v5.2.0.11 SNMP is
+> visible under its own menu — look for a "v3" or "Users" subsection inside it.
+> If you can only find v1/v2c options, your firmware may not expose v3 via the
+> GUI even if it supports it — try a firmware-level CLI approach or stick with
+> v2c on a trusted LAN.
+
+**Update `inventory.yml`:**
+
+```yaml
+network:
+  switch:
+    - host: 192.168.0.X
+      snmp_user: crandle
+      auth_key: your_auth_passphrase
+      priv_key: your_priv_passphrase
+      auth_proto: sha      # sha (default) | md5
+      priv_proto: aes      # aes (default) | des
+      collector: snmp
+```
+
+`auth_proto` and `priv_proto` default to `sha`/`aes` if omitted.

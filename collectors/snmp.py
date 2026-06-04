@@ -1,7 +1,7 @@
 import asyncio
 import datetime
 
-from puresnmp import Client, PyWrapper, V2C
+from puresnmp import Auth, Client, Priv, PyWrapper, V2C, V3
 
 _PHYSICAL_TYPES = {6, 117}  # ethernetCsmacd, gigabitEthernet
 
@@ -101,8 +101,8 @@ async def _build_port_map(client) -> list:
     return entries
 
 
-async def _collect(host: str, community: str, port: int) -> dict:
-    client = PyWrapper(Client(host, V2C(community), port=port))
+async def _collect(host: str, creds, port: int) -> dict:
+    client = PyWrapper(Client(host, creds, port=port))
 
     async def get(oid):
         try:
@@ -151,8 +151,21 @@ async def _collect(host: str, community: str, port: int) -> dict:
     }
 
 
+def _credentials(host_config: dict):
+    """Return V3 credentials if snmp_user is set, otherwise V2C community string."""
+    if host_config.get("snmp_user"):
+        auth_key   = host_config.get("auth_key", "")
+        priv_key   = host_config.get("priv_key", "")
+        auth_proto = host_config.get("auth_proto", "sha").lower()
+        priv_proto = host_config.get("priv_proto", "aes").lower()
+        auth = Auth(key=auth_key.encode(), method=auth_proto) if auth_key else None
+        priv = Priv(key=priv_key.encode(), method=priv_proto) if (priv_key and auth) else None
+        return V3(username=host_config["snmp_user"], auth=auth, priv=priv)
+    return V2C(host_config.get("community", "public"))
+
+
 def collect_snmp(host_config: dict) -> dict:
-    host      = host_config["host"]
-    community = host_config.get("community", "public")
-    port      = host_config.get("snmp_port", 161)
-    return asyncio.run(_collect(host, community, port))
+    host  = host_config["host"]
+    port  = host_config.get("snmp_port", 161)
+    creds = _credentials(host_config)
+    return asyncio.run(_collect(host, creds, port))
