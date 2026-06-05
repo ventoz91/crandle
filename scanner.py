@@ -40,7 +40,7 @@ def scan_linux(host_config: dict) -> tuple:
     host = host_config["host"]
     client = None
     try:
-        client = connect(host, host_config["user"])
+        client = connect(host, host_config["user"], legacy=host_config.get("legacy_ssh", False))
         data = collect_linux(client)
         return (host, data, None)
     except Exception as e:
@@ -54,7 +54,7 @@ def scan_macos(host_config: dict) -> tuple:
     host = host_config["host"]
     client = None
     try:
-        client = connect(host, host_config["user"])
+        client = connect(host, host_config["user"], legacy=host_config.get("legacy_ssh", False))
         data = collect_macos(client)
         return (host, data, None)
     except Exception as e:
@@ -68,7 +68,7 @@ def scan_network(host_config: dict) -> tuple:
     host = host_config["host"]
     client = None
     try:
-        client = connect(host, host_config["user"])
+        client = connect(host, host_config["user"], legacy=host_config.get("legacy_ssh", False))
         data = collect_network(client)
         return (host, data, None)
     except Exception as e:
@@ -100,7 +100,7 @@ def scan_switch(host_config: dict) -> tuple:
     host = host_config["host"]
     client = None
     try:
-        client = connect(host, host_config["user"])
+        client = connect(host, host_config["user"], legacy=host_config.get("legacy_ssh", False))
         data = collect_switch(client)
         return (host, data, None)
     except Exception as e:
@@ -114,7 +114,7 @@ def scan_windows(host_config: dict) -> tuple:
     host = host_config["host"]
     client = None
     try:
-        client = connect(host, host_config["user"])
+        client = connect(host, host_config["user"], legacy=host_config.get("legacy_ssh", False))
         data = collect_windows(client)
         return (host, data, None)
     except Exception as e:
