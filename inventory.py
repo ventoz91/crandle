@@ -1,6 +1,8 @@
 import argparse
 import concurrent.futures
 import difflib
+from datetime import datetime
+import re
 import subprocess
 import yaml
 
@@ -8,7 +10,7 @@ from rich.console import Console
 from rich.table import Table
 
 from utils.ssh import connect
-from utils.report import write_report, write_master_report, read_master_report
+from utils.report import write_report, write_master_report, read_master_report, get_previous_archive, write_diff_report
 from collectors.linux import collect_linux
 from collectors.macos import collect_macos
 from collectors.network import collect_network
@@ -658,6 +660,155 @@ def show_diff(new_report: str):
             console.print(f"[cyan]{line}[/cyan]")
 
 
+# Matches size values (G, GB, GiB, T, TB, TiB, M, MB, MiB) and percentages
+_MEASURE_RE = re.compile(
+    r'(\d+\.?\d*)\s*(GiB|TiB|MiB|GB|TB|MB|Gi|Ti|Mi|G|T|M|%)(?!\w)',
+    re.IGNORECASE,
+)
+_SIZE_THRESHOLD_GB = 5.0
+_PCT_THRESHOLD = 5.0
+
+
+def _to_gb(val: float, unit: str) -> float:
+    u = unit.upper()
+    if u in ('T', 'TB', 'TIB', 'TI'):
+        return val * 1024
+    if u in ('M', 'MB', 'MIB', 'MI'):
+        return val / 1024
+    return val  # G, GB, Gi/GI, GiB/GIB
+
+
+def _noise_only(old: str, new: str) -> bool:
+    """True when lines differ only in size/pct values that are all within threshold."""
+    if old == new:
+        return True
+    old_m = _MEASURE_RE.findall(old)
+    new_m = _MEASURE_RE.findall(new)
+    if len(old_m) != len(new_m) or not old_m:
+        return False
+    if _MEASURE_RE.sub('\x00', old) != _MEASURE_RE.sub('\x00', new):
+        return False
+    for (ov, ou), (nv, nu) in zip(old_m, new_m):
+        if ou == '%' or nu == '%':
+            if abs(float(nv) - float(ov)) > _PCT_THRESHOLD:
+                return False
+        else:
+            if abs(_to_gb(float(nv), nu) - _to_gb(float(ov), ou)) > _SIZE_THRESHOLD_GB:
+                return False
+    return True
+
+
+def _filter_size_noise(diff_lines: list[str]) -> list[str]:
+    """Drop -/+ blocks whose only changes are size/pct values within threshold.
+
+    Handles multi-line blocks (N removals followed by N additions) — the block
+    is only dropped if every paired line passes _noise_only, so a single
+    significant change in the block keeps everything.
+    """
+    result = []
+    i = 0
+    while i < len(diff_lines):
+        line = diff_lines[i]
+        if line.startswith('-') and not line.startswith('---'):
+            # Collect consecutive - lines
+            neg = []
+            j = i
+            while j < len(diff_lines) and diff_lines[j].startswith('-') and not diff_lines[j].startswith('---'):
+                neg.append(diff_lines[j])
+                j += 1
+            # Collect consecutive + lines immediately after
+            pos = []
+            while j < len(diff_lines) and diff_lines[j].startswith('+') and not diff_lines[j].startswith('+++'):
+                pos.append(diff_lines[j])
+                j += 1
+            # Filter the whole block only if sizes match and every pair is noise
+            if (len(neg) == len(pos)
+                    and all(_noise_only(n[1:], p[1:]) for n, p in zip(neg, pos))):
+                i = j
+                continue
+            result.extend(neg)
+            result.extend(pos)
+            i = j
+        else:
+            result.append(line)
+            i += 1
+    return result
+
+
+def _clean_empty_hunks(lines: list[str]) -> list[str]:
+    """Remove @@ hunk headers left empty after noise filtering; return [] if nothing remains."""
+    headers, i = [], 0
+    while i < len(lines) and not lines[i].startswith('@@ '):
+        headers.append(lines[i])
+        i += 1
+    hunks = []
+    while i < len(lines):
+        if lines[i].startswith('@@ '):
+            hunk, j = [lines[i]], i + 1
+            while j < len(lines) and not lines[j].startswith('@@ '):
+                hunk.append(lines[j])
+                j += 1
+            if any(
+                (l.startswith('+') and not l.startswith('+++')) or
+                (l.startswith('-') and not l.startswith('---'))
+                for l in hunk[1:]
+            ):
+                hunks.extend(hunk)
+            i = j
+        else:
+            i += 1
+    return (headers + hunks) if hunks else []
+
+
+def save_survey_diff():
+    master = read_master_report()
+    if master is None:
+        console.print("[yellow]No master report found — run with --master first.[/yellow]")
+        return
+
+    prev = get_previous_archive()
+    if prev is None:
+        console.print("[yellow]Need at least two archived reports to diff.[/yellow]")
+        return
+
+    with open(prev, "r", encoding="utf-8") as f:
+        prev_content = f.read()
+
+    old_lines = prev_content.splitlines(keepends=True)
+    new_lines = master.splitlines(keepends=True)
+    diff = _clean_empty_hunks(_filter_size_noise(list(
+        difflib.unified_diff(old_lines, new_lines, fromfile=prev.name, tofile="HardwareSurvey.md", lineterm="")
+    )))
+
+    if not diff:
+        console.print("[green]No meaningful differences (all changes within ±5 GB / ±5% threshold).[/green]")
+        return
+
+    added = sum(1 for l in diff if l.startswith("+") and not l.startswith("+++"))
+    removed = sum(1 for l in diff if l.startswith("-") and not l.startswith("---"))
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    lines = [
+        f"# Hardware Survey Diff — {now}",
+        "",
+        "| | File |",
+        "|-|------|",
+        f"| Previous | `{prev.name}` |",
+        "| Current  | `HardwareSurvey.md` |",
+        "",
+        f"**{added} lines added, {removed} lines removed**",
+        "",
+        "```diff",
+        *[l.rstrip() for l in diff],
+        "```",
+        "",
+    ]
+
+    path = write_diff_report("\n".join(lines))
+    console.print(f"[green]Diff saved:[/green] {path}")
+    console.print(f"  {added} lines added, {removed} lines removed vs. {prev.name}")
+
+
 # ---------------------------------------------------------------------------
 # Scan functions (run in thread pool)
 # ---------------------------------------------------------------------------
@@ -799,6 +950,7 @@ def main():
             "  python inventory.py --dry-run              ping hosts and check reachability only\n"
             "  python inventory.py --host 192.168.0.53   scan a single host\n"
             "  python inventory.py --inventory ~/lab.yml  use a custom inventory file\n"
+            "  python inventory.py --save-diff            write diff of master vs previous archive\n"
         ),
     )
     parser.add_argument("--master", action="store_true",
@@ -809,11 +961,17 @@ def main():
                         help="ping all hosts and report reachability without scanning")
     parser.add_argument("--diff", action="store_true",
                         help="show changes compared to the last master report")
+    parser.add_argument("--save-diff", action="store_true",
+                        help="write a diff file comparing master vs. previous archive to Hardware Historic/")
     parser.add_argument("--host", metavar="HOST",
                         help="scan only hosts whose address contains HOST (substring match)")
     parser.add_argument("--inventory", metavar="FILE", default="inventory.yml",
                         help="path to inventory file (default: inventory.yml)")
     args = parser.parse_args()
+
+    if args.save_diff:
+        save_survey_diff()
+        return
 
     try:
         inventory = load_inventory(args.inventory)

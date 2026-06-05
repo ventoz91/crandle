@@ -1,5 +1,10 @@
+import re
 from pathlib import Path
 from datetime import datetime
+
+
+# Matches only timestamped survey archives — never diff files or the master
+_ARCHIVE_RE = re.compile(r"^HardwareSurvey_(\d{4}-\d{2}-\d{2}_\d{2}-\d{2})\.md$")
 
 
 REPORT_DIR = Path.home() / "Documents" / "Notes" / "Ventoz" / "Reference"
@@ -37,3 +42,24 @@ def read_master_report() -> str | None:
         return None
     with open(MASTER_PATH, "r", encoding="utf-8") as f:
         return f.read()
+
+
+def _sorted_archives() -> list[Path]:
+    _ensure_dirs()
+    matched = [(m.group(1), p) for p in ARCHIVE_DIR.iterdir() if (m := _ARCHIVE_RE.match(p.name))]
+    return [p for _, p in sorted(matched)]
+
+
+def get_previous_archive() -> Path | None:
+    """Return the second-most-recent archive — the one before the current master was written."""
+    archives = _sorted_archives()
+    return archives[-2] if len(archives) >= 2 else None
+
+
+def write_diff_report(content: str) -> Path:
+    _ensure_dirs()
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
+    diff_path = ARCHIVE_DIR / f"HardwareSurveyDiff_{timestamp}.md"
+    with open(diff_path, "w", encoding="utf-8") as f:
+        f.write(content)
+    return diff_path
