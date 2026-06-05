@@ -15,7 +15,7 @@ Homelab inventory scanner. Connects to Linux, macOS, Windows, and network applia
 - **Rich terminal output** — formatted tables with color-coded status (green = running/up, red = stopped/failed)
 - **Summary table** — at-a-glance view of every host after detail tables
 - **Timestamped Markdown report** saved per run, with `--master` to maintain a single always-current file
-- **Change detection** — `--diff` shows what changed vs. the last master report
+- **Change detection** — `--diff` shows what changed vs. the last master report; `--save-diff` writes a filtered diff file (size/percentage changes within ±5 GB / ±5% are suppressed as noise)
 - **Dry run** — `--dry-run` pings all hosts and reports reachability without scanning
 
 ## Requirements
@@ -93,6 +93,17 @@ Any device running standard Unix commands over SSH works out of the box. Command
 
 If your network device has a descriptive host type name (e.g. `firewall`, `router`, `ap`), add `collector: network` so Crandle knows which collector to use. See [SETUP.md](SETUP.md) for SSH setup instructions for OPNsense and TP-Link Omada APs.
 
+For old embedded devices that only support weak SSH algorithms (dh-group1-sha1, ssh-rsa, aes-cbc), add `legacy_ssh: true` to the host entry. Without it, Paramiko uses modern algorithms only:
+
+```yaml
+network:
+  ap:
+    - host: 192.168.1.3
+      user: admin
+      collector: network
+      legacy_ssh: true
+```
+
 ### Managed switches (SNMP)
 
 The `snmp` collector uses `snmpget`/`snmpwalk` from the system `net-snmp` package — install with `sudo pacman -S net-snmp` (or your distro equivalent). Supports SNMPv2c (community string) and SNMPv3 (authNoPriv with SHA). See [SETUP.md](SETUP.md) for full setup instructions including the Netgear GS748TS SNMPv3 VACM walkthrough.
@@ -128,6 +139,7 @@ python inventory.py [options]
 | `--master` | Overwrite `HardwareSurvey.md` and save a timestamped archive |
 | `--master --diff` | Show what changed vs. the last master before overwriting |
 | `--diff` | Show diff vs. last master without overwriting |
+| `--save-diff` | Write a filtered diff file comparing master vs. previous archive (no scan needed) |
 | `--no-report` | Display results in the terminal only, write nothing |
 | `--dry-run` | Ping all hosts and report reachability, no scanning |
 | `--host HOST` | Scan only hosts whose address contains HOST (substring) |
@@ -176,8 +188,12 @@ Requires `token_id` and `token_secret` in `inventory.yml` so the timer can authe
 ## Project structure
 
 ```
-inventory.py            # Entry point — scanning, display, report generation
+inventory.py            # CLI entry point — arg parsing, preflight, diff logic, main()
+scanner.py              # Scan orchestration — load/filter inventory, all scan_* functions
 inventory.yml           # Host definitions (gitignored — edit directly)
+render/
+  terminal.py           # Rich terminal display — all display_* functions, console
+  markdown.py           # Markdown rendering — all *_to_markdown functions
 collectors/
   linux.py              # SSH: system info, Docker
   macos.py              # SSH: system info, Homebrew
@@ -187,6 +203,6 @@ collectors/
   switch.py             # Interactive CLI: Netgear ProSAFE managed switches (SSH/PTY)
   windows.py            # SSH + PowerShell: system info, third-party services
 utils/
-  ssh.py                # Paramiko connection helper (key → password fallback, thread-safe)
-  report.py             # Markdown report writer (timestamped + master)
+  ssh.py                # Paramiko connection helper (key → password fallback, thread-safe, legacy opt-in)
+  report.py             # Report writer — timestamped archive, master, diff files
 ```

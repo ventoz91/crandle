@@ -22,7 +22,10 @@ pip install -r requirements.txt
 
 ## Architecture
 
-- **`inventory.py`** — entry point. Reads `inventory.yml`, builds a flat list of scan tasks (one per host), runs them all concurrently via `ThreadPoolExecutor`, displays results with Rich, prints a summary table, and calls `write_report`/`write_master_report`.
+- **`inventory.py`** — CLI entry point. Parses arguments, runs preflight ping check (`--dry-run`), orchestrates the scan loop, calls display/markdown/report functions, and handles `--diff` / `--save-diff`. Does not contain collectors, renderers, or scan functions — those live in their own modules.
+- **`scanner.py`** — scan orchestration. `load_inventory`, `_iter_hosts`, `filter_inventory` handle inventory parsing. All `scan_*` functions open connections, call the appropriate collector, and return `(host, data, error)` tuples. `SCAN_FNS` dict maps collector names to functions.
+- **`render/terminal.py`** — Rich terminal output. All `display_*` functions, `display_summary`, `_status_style`, and the shared `console = Console()` instance. `DISPLAY_FNS` dict maps collector names to functions. Imports skip-set constants from `render/markdown.py`.
+- **`render/markdown.py`** — Markdown rendering. All `*_to_markdown` functions, `role_to_markdown`, skip sets (`_LINUX_SKIP` etc.), and `MARKDOWN_FNS` dict.
 - **`inventory.yml`** — defines the hosts to scan. Top-level keys are **role names** (`servers`, `workstations`, `network`, or any custom label). Under each role, hosts are grouped by **host type** (`linux`, `macos`, `windows`, `proxmox`, `network`). Roles with only comments parse as `null` and are silently skipped.
 - **`collectors/linux.py`** — `collect_linux(client)` runs shell commands over an open Paramiko SSH client. Returns OS, kernel, arch, CPU model/cores, memory, swap, `all_disks` (list of `{device, used, total, pct, mount}`), load average, last boot, IP, interfaces, DNS servers, timezone, NTP sync, virt platform, listening ports, logged-in users, package count, failed systemd services, and Docker containers.
 - **`collectors/macos.py`** — `collect_macos(client)` collects macOS system info via SSH. Returns OS version, build, model, serial, arch, CPU cores, memory, `all_disks` list, uptime, interfaces, DNS servers, timezone, FileVault status, brew formula count (`brew_formulae`), and brew cask count (`brew_casks`).
@@ -31,8 +34,8 @@ pip install -r requirements.txt
 - **`collectors/snmp.py`** — `collect_snmp(host_config)` calls `snmpget`/`snmpwalk` from the system `net-snmp` package via subprocess. Supports SNMPv2c (community string) and SNMPv3 (authNoPriv SHA, authPriv AES). Returns hostname, description, contact, location, uptime, port counts, MAC table entry count, `vlan_list` (list of `{id, name}` from Q-BRIDGE-MIB), and `port_map` (list of `{port, speed, mac, ip}` cross-referencing FDB, ifName, ifSpeed, and ARP tables). `_int()` handles net-snmp enum values like `ethernetCsmacd(6)`.
 - **`collectors/proxmox.py`** — `collect_proxmox(host_config)` authenticates via `proxmoxer.ProxmoxAPI` and returns `{host, api_version, nodes: [{name, status, cpu, cpu_count, cpu_model, memory_*, disk_*, uptime, kernel, pve_version, vms: [...], lxc: [...], storage: [...]}]}`. VM entries include `tags`, `snapshots` (count), and `guest_ips` (via QEMU guest agent `network-get-interfaces`, loopback filtered). LXC entries include `tags` and `ip` (from config). Contains `_fmt_bytes`, `_fmt_cpu`, and `_fmt_uptime` helpers. Password prompts cached per `user@host` and serialized via `_password_lock`.
 - **`collectors/windows.py`** — `collect_windows(client)` runs PowerShell commands via SSH. Returns OS, version, uptime, CPU (first processor only), cores, threads, GPU, memory, IP, domain, timezone, BIOS, motherboard, installed app count, `all_drives` (list of `{drive, used, total}`), `network_adapters` (list of `{name, mac, speed, description}`), and running non-Microsoft services.
-- **`utils/ssh.py`** — `connect(host, username)` returns an authenticated Paramiko client (key → password fallback; passwords are cached per username; `_password_lock` serializes all password prompts — SSH and Proxmox — so parallel scans don't interleave). `run_command(client, cmd, timeout=30)` executes a command with a 30-second read timeout and returns stdout as a stripped string.
-- **`utils/report.py`** — `write_report(content)` saves a timestamped Markdown file under `Reference/Hardware Historic/`. `write_master_report(content)` overwrites `Reference/HardwareSurvey.md`. `read_master_report()` returns the current master content (or `None`). Both functions call `_ensure_dirs()` which creates both `Reference/` and `Reference/Hardware Historic/` if they don't exist.
+- **`utils/ssh.py`** — `connect(host, username, legacy=False)` returns an authenticated Paramiko client (key → password fallback; passwords are cached per username; `_password_lock` serializes all password prompts so parallel scans don't interleave). `legacy=True` re-enables weak SSH algorithms (dh-group1-sha1, aes-cbc, etc.) for old embedded devices; set via `legacy_ssh: true` in `inventory.yml`. `run_command(client, cmd, timeout=30)` executes a command and returns stdout as a stripped string.
+- **`utils/report.py`** — `write_report(content)` saves a timestamped Markdown archive under `Reference/Hardware Historic/`. `write_master_report(content)` overwrites `Reference/HardwareSurvey.md`. `read_master_report()` returns the current master (or `None`). `get_previous_archive()` returns the second-most-recent archive path (used by `--save-diff`). `write_diff_report(content)` saves a `HardwareSurveyDiff_<timestamp>.md` file to the same archive directory.
 
 ## Inventory structure
 
@@ -42,6 +45,7 @@ role_name:          # e.g. servers, workstations, network — any name
     - host: IP_OR_HOSTNAME
       user: USERNAME
       collector: network   # override when host_type is a descriptive label that isn't a collector name
+      legacy_ssh: true     # optional: re-enables weak SSH algorithms for old embedded devices
       # proxmox also accepts: realm, verify_ssl, token_id, token_secret
 ```
 
@@ -60,13 +64,18 @@ All `*_to_markdown()` functions output at `##` level so they slot cleanly under 
 ## Adding a new host type
 
 1. Create `collectors/<type>.py` with a `collect_<type>(client_or_config)` function returning a dict. Format all values to strings at collection time (see `_fmt_bytes`, `_fmt_cpu`, `_fmt_uptime` in `proxmox.py` as examples) so display and markdown functions never receive raw integers.
-2. In `inventory.py`:
+2. In `render/markdown.py`:
+   - Add a `_<TYPE>_SKIP` set for list fields rendered as subtables
    - Add `<type>_to_markdown(data)` (use `##` for the host header, skip `hostname` key since it's in the title)
-   - Add `display_<type>(data)` using `console.print(Table(...))` (skip `hostname` row)
+   - Register it in `MARKDOWN_FNS`
+3. In `render/terminal.py`:
+   - Add `display_<type>(data)` using `console.print(Table(...))` (skip `hostname` row; import any new skip sets from `render/markdown.py`)
+   - Register it in `DISPLAY_FNS`
+4. In `scanner.py`:
    - Add `scan_<type>(host_config) -> tuple` returning `(host_addr, data, error)` with a `try/except/finally` that closes any connection in `finally`
-   - Register all three in the `SCAN_FNS`, `MARKDOWN_FNS`, and `DISPLAY_FNS` dicts
-3. Add `display_summary` handling for the new type — results tuples are `(role, host_type, collector, host_addr, data, err)` (6 elements)
-4. Add a commented-out example to `inventory.yml`
+   - Register it in `SCAN_FNS`
+5. In `inventory.py`, add `display_summary` handling for the new type — results tuples are `(role, host_type, collector, host_addr, data, err)` (6 elements)
+6. Add a commented-out example to `inventory.yml`
 
 ## CLI flags
 
@@ -75,6 +84,7 @@ All `*_to_markdown()` functions output at `##` level so they slot cleanly under 
 | _(none)_ | Scan all hosts, save timestamped report |
 | `--master` | Also overwrite `HardwareSurvey.md` |
 | `--diff` | Show unified diff vs. last master |
+| `--save-diff` | Write a filtered diff file (master vs. previous archive) — no scan needed |
 | `--no-report` | Terminal display only |
 | `--dry-run` | Ping check only, no scanning |
 | `--host HOST` | Substring filter on host address |
@@ -82,7 +92,7 @@ All `*_to_markdown()` functions output at `##` level so they slot cleanly under 
 
 ## Display/markdown conventions
 
-List-type fields (all_disks, all_drives, network_adapters, interface_table, vlan_list, port_map, docker_containers, etc.) are excluded from the generic key/value property loop via `_*_SKIP` sets and rendered as dedicated subtables. This keeps the property table clean and the subtables sortable/scannable. Any new list field must be added to the relevant skip set and given its own display/markdown block.
+List-type fields (all_disks, all_drives, network_adapters, interface_table, vlan_list, port_map, docker_containers, etc.) are excluded from the generic key/value property loop via `_*_SKIP` sets defined in `render/markdown.py` and imported by `render/terminal.py`. They are rendered as dedicated subtables. Any new list field must be added to the relevant skip set in `render/markdown.py` and given its own display block in `render/terminal.py` and markdown block in `render/markdown.py`.
 
 ## Known deferred items
 
