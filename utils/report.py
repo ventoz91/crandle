@@ -1,3 +1,4 @@
+import json
 import re
 from pathlib import Path
 from datetime import datetime
@@ -22,17 +23,32 @@ def _ensure_dirs():
     ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def get_report_path():
+def report_timestamp() -> str:
+    return datetime.now().strftime("%Y-%m-%d_%H-%M")
+
+
+def get_report_path(timestamp: str | None = None) -> Path:
     _ensure_dirs()
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
-    return ARCHIVE_DIR / f"HardwareSurvey_{timestamp}.md"
+    return ARCHIVE_DIR / f"HardwareSurvey_{timestamp or report_timestamp()}.md"
 
 
-def write_report(content: str) -> Path:
-    report_path = get_report_path()
+def write_report(content: str, timestamp: str | None = None) -> Path:
+    report_path = get_report_path(timestamp)
     with open(report_path, "w", encoding="utf-8") as f:
         f.write(content)
     return report_path
+
+
+def write_json_report(hosts: list, timestamp: str | None = None) -> Path:
+    """Write raw collected data for every scanned host as a timestamped JSON
+    archive — same naming/timestamp scheme as write_report so the two pair up."""
+    _ensure_dirs()
+    timestamp = timestamp or report_timestamp()
+    json_path = ARCHIVE_DIR / f"HardwareSurvey_{timestamp}.json"
+    payload = {"timestamp": timestamp, "hosts": hosts}
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, default=str)
+    return json_path
 
 
 def write_master_report(content: str) -> Path:

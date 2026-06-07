@@ -12,7 +12,7 @@ from render.markdown import MARKDOWN_FNS, role_to_markdown
 from scanner import SCAN_FNS, load_inventory, filter_inventory, _iter_hosts
 from utils.report import (
     write_report, write_master_report, read_master_report,
-    get_previous_archive, write_diff_report,
+    get_previous_archive, write_diff_report, write_json_report, report_timestamp,
 )
 
 
@@ -246,6 +246,7 @@ def main():
             "  python inventory.py --host 192.168.0.53   scan a single host\n"
             "  python inventory.py --inventory ~/lab.yml  use a custom inventory file\n"
             "  python inventory.py --save-diff            write diff of master vs previous archive\n"
+            "  python inventory.py --json                 also write a timestamped JSON archive\n"
         ),
     )
     parser.add_argument("--master", action="store_true",
@@ -258,6 +259,8 @@ def main():
                         help="show changes compared to the last master report")
     parser.add_argument("--save-diff", action="store_true",
                         help="write a diff file comparing master vs. previous archive to Hardware Historic/")
+    parser.add_argument("--json", action="store_true",
+                        help="also write a timestamped JSON archive of raw collected data alongside the report")
     parser.add_argument("--host", metavar="HOST",
                         help="scan only hosts whose address contains HOST (substring match)")
     parser.add_argument("--inventory", metavar="FILE", default="inventory.yml",
@@ -346,14 +349,28 @@ def main():
         if args.diff:
             show_diff(full_report)
 
+        timestamp = report_timestamp()
+
         if args.master:
             master_path = write_master_report(full_report)
             console.print(f"\n[green]Master report updated:[/green] {master_path}")
-            archive_path = write_report(full_report)
+            archive_path = write_report(full_report, timestamp=timestamp)
             console.print(f"[green]Archive saved:[/green] {archive_path}")
         else:
-            report_path = write_report(full_report)
+            report_path = write_report(full_report, timestamp=timestamp)
             console.print(f"\n[green]Report saved:[/green] {report_path}")
+
+        if args.json:
+            json_hosts = [
+                {
+                    "role": role, "host_type": host_type, "collector": collector,
+                    "host": host_addr, "data": data,
+                    "error": str(err) if err else None,
+                }
+                for role, host_type, collector, host_addr, data, err in ordered_results
+            ]
+            json_path = write_json_report(json_hosts, timestamp=timestamp)
+            console.print(f"[green]JSON archive saved:[/green] {json_path}")
 
     except KeyboardInterrupt:
         console.print("\n[yellow]Inventory scan cancelled by user.[/yellow]")
