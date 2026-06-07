@@ -61,8 +61,8 @@ def connect_proxmox(host, user, realm, verify_ssl, token_id=None, token_secret=N
     )
 
 
-def _guest_ips(proxmox, node_name, vmid) -> str:
-    """Return comma-separated IPv4 addresses from QEMU guest agent, or empty string."""
+def _guest_ips(proxmox, node_name, vmid) -> tuple[str, bool]:
+    """Return (comma-separated IPv4 addresses, agent_responded) from the QEMU guest agent."""
     try:
         result = proxmox.nodes(node_name).qemu(vmid).agent("network-get-interfaces").get()
         ips = []
@@ -74,9 +74,9 @@ def _guest_ips(proxmox, node_name, vmid) -> str:
                     ip = addr.get("ip-address", "")
                     if ip and not ip.startswith("127."):
                         ips.append(ip)
-        return ", ".join(ips)
+        return ", ".join(ips), True
     except Exception:
-        return ""
+        return "", False
 
 
 def _lxc_ip(proxmox, node_name, vmid) -> str:
@@ -141,6 +141,7 @@ def collect_proxmox(host_config: dict):
             "vms":          [],
             "lxc":          [],
             "storage":      [],
+            "notes":        [],
         }
 
         for vm in proxmox.nodes(node_name).qemu.get():
@@ -153,6 +154,12 @@ def collect_proxmox(host_config: dict):
                 snap_count = max(0, len(snaps) - 1)  # subtract "current" pseudo-snapshot
             except Exception:
                 snap_count = 0
+
+            guest_ips = ""
+            if status == "running":
+                guest_ips, agent_ok = _guest_ips(proxmox, node_name, vmid)
+                if not agent_ok:
+                    node_data["notes"].append(f"Guest agent not responding for VM {vmid} ({vm.get('name')}) — guest IPs unavailable")
 
             vm_entry = {
                 "vmid":        vmid,
@@ -167,7 +174,7 @@ def collect_proxmox(host_config: dict):
                 "max_disk":    _fmt_bytes(vm.get("maxdisk")),
                 "uptime":      _fmt_uptime(vm.get("uptime")),
                 "snapshots":   snap_count,
-                "guest_ips":   _guest_ips(proxmox, node_name, vmid) if status == "running" else "",
+                "guest_ips":   guest_ips,
             }
             node_data["vms"].append(vm_entry)
 

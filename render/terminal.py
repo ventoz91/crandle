@@ -6,6 +6,14 @@ from render.markdown import _LINUX_SKIP, _MACOS_SKIP, _NETWORK_SKIP, _SNMP_SKIP,
 console = Console()
 
 
+def _print_notes(notes, label="Collector notes"):
+    if not notes:
+        return
+    console.print(f"[yellow]  {label}:[/yellow]")
+    for n in notes:
+        console.print(f"[yellow]    - {n}[/yellow]")
+
+
 def _status_style(status: str) -> str:
     s = str(status).lower()
     if s in ("running", "online", "up"):
@@ -55,6 +63,8 @@ def display_linux(data):
     if data.get("docker_compose_files"):
         for cf in data["docker_compose_files"]:
             console.print(f"\n[bold]Docker Compose:[/bold] {cf['path']}\n{cf['content']}")
+
+    _print_notes(data.get("notes"))
 
 
 def display_macos(data):
@@ -167,6 +177,8 @@ def display_proxmox(data):
                 str(s["name"]), str(s["type"]), str(s["used"]), str(s["total"]), str(s["available"]),
             )
         console.print(storage_table)
+
+        _print_notes(node.get("notes"))
 
 
 def display_snmp(data):

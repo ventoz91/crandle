@@ -1,7 +1,7 @@
 from utils.ssh import run_command
 
 
-def collect_linux(client):
+def collect_linux(client, compose_paths=None):
     commands = {
         "hostname":        "hostname",
         "os":              "cat /etc/os-release | grep PRETTY_NAME | cut -d= -f2 | tr -d '\"'",
@@ -25,6 +25,7 @@ def collect_linux(client):
     }
 
     data = {}
+    notes = []
     for key, cmd in commands.items():
         data[key] = run_command(client, cmd)
 
@@ -36,6 +37,8 @@ def collect_linux(client):
     data["packages"] = pkg_out if pkg_out and not pkg_out.startswith("ERROR:") else ""
 
     # Failed systemd services
+    if not run_command(client, "command -v systemctl"):
+        notes.append("systemctl not found — failed-service detection skipped")
     failed_output = run_command(
         client,
         "systemctl list-units --failed --no-legend 2>/dev/null | awk '{print $1}' | tr '\n' ' ' | sed 's/ $//'",
@@ -61,6 +64,9 @@ def collect_linux(client):
     data["all_disks"] = disks
 
     # Docker containers
+    has_docker = bool(run_command(client, "command -v docker"))
+    if not has_docker:
+        notes.append("Docker not found — container and compose data unavailable")
     docker_output = run_command(
         client,
         "docker ps --format '{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}' 2>/dev/null",
@@ -77,12 +83,14 @@ def collect_linux(client):
     data["docker_containers"] = containers
 
     # Docker compose files
-    compose_paths_raw = run_command(
-        client,
-        "find /home/data -maxdepth 2 -name 'docker-compose.yml' 2>/dev/null",
-    )
     compose_files = []
-    if compose_paths_raw and not compose_paths_raw.startswith("ERROR:"):
+    for root in (compose_paths or ["/home/data"]):
+        compose_paths_raw = run_command(
+            client,
+            f"find {root} -maxdepth 2 -name 'docker-compose.yml' 2>/dev/null",
+        )
+        if not compose_paths_raw or compose_paths_raw.startswith("ERROR:"):
+            continue
         for path in compose_paths_raw.splitlines():
             path = path.strip()
             if not path:
@@ -92,4 +100,5 @@ def collect_linux(client):
                 compose_files.append({"path": path, "content": content})
     data["docker_compose_files"] = compose_files
 
+    data["notes"] = notes
     return data

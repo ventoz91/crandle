@@ -41,7 +41,7 @@ def scan_linux(host_config: dict) -> tuple:
     client = None
     try:
         client = connect(host, host_config["user"], legacy=host_config.get("legacy_ssh", False))
-        data = collect_linux(client)
+        data = collect_linux(client, compose_paths=host_config.get("compose_paths"))
         return (host, data, None)
     except Exception as e:
         return (host, None, e)

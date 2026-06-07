@@ -1,6 +1,12 @@
 # TODO
 
-## Improvements
+## Priority 3 — Larger features
+
+### JSON output (`--json`)
+Markdown is great for humans; JSON would unlock dashboards, alerting, and
+structured historical comparison. Each collector already returns a dict — a
+`--json` flag that dumps the raw collected data to a timestamped `.json` file
+alongside the markdown report would make the tool much more composable.
 
 ### Disk trend tracking (`--trend` flag)
 Timestamped archives already exist in `Hardware Historic/`. Add a `--trend` flag

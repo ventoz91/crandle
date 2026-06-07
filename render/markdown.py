@@ -1,4 +1,6 @@
-_LINUX_SKIP   = {"hostname", "docker_containers", "failed_services", "all_disks", "docker_compose_files"}
+from utils.report import md_escape
+
+_LINUX_SKIP   = {"hostname", "docker_containers", "failed_services", "all_disks", "docker_compose_files", "notes"}
 _MACOS_SKIP   = {"hostname", "all_disks"}
 _NETWORK_SKIP = {"hostname", "interface_table"}
 _SNMP_SKIP    = {"hostname", "port_map", "vlan_list"}
@@ -10,20 +12,30 @@ _SNMP_LABELS  = {
 _WIN_SKIP = {"hostname", "running_services", "all_drives", "network_adapters"}
 
 
+def _notes_block(notes, heading="### Collector Notes"):
+    if not notes:
+        return []
+    md = [heading, ""]
+    for n in notes:
+        md.append(f"- {md_escape(n)}")
+    md.append("")
+    return md
+
+
 def linux_to_markdown(data):
     md = [f"## {data['hostname']}", ""]
     md += ["| Property | Value |", "|----------|-------|"]
     for key, value in data.items():
         if key in _LINUX_SKIP:
             continue
-        md.append(f"| {key} | {value} |")
+        md.append(f"| {key} | {md_escape(value)} |")
     md.append("")
 
     if data.get("all_disks"):
         md += ["### Disks", "", "| Device | Used | Total | Use% | Mount |",
                "|--------|------|-------|------|-------|"]
         for d in data["all_disks"]:
-            md.append(f"| {d['device']} | {d['used']} | {d['total']} | {d['pct']} | {d['mount']} |")
+            md.append(f"| {md_escape(d['device'])} | {md_escape(d['used'])} | {md_escape(d['total'])} | {md_escape(d['pct'])} | {md_escape(d['mount'])} |")
         md.append("")
 
     if data.get("failed_services"):
@@ -36,12 +48,14 @@ def linux_to_markdown(data):
             "|----|------|-------|--------|-------|",
         ]
         for ct in data["docker_containers"]:
-            md.append(f"| {ct['id']} | {ct['name']} | {ct['image']} | {ct['status']} | {ct['ports']} |")
+            md.append(f"| {md_escape(ct['id'])} | {md_escape(ct['name'])} | {md_escape(ct['image'])} | {md_escape(ct['status'])} | {md_escape(ct['ports'])} |")
         md.append("")
 
     if data.get("docker_compose_files"):
         for cf in data["docker_compose_files"]:
             md += [f"### Docker Compose — `{cf['path']}`", "", "```yaml", cf["content"], "```", ""]
+
+    md += _notes_block(data.get("notes"))
 
     md += ["---", ""]
     return "\n".join(md)
@@ -53,14 +67,14 @@ def macos_to_markdown(data):
     for key, value in data.items():
         if key in _MACOS_SKIP:
             continue
-        md.append(f"| {key} | {value} |")
+        md.append(f"| {key} | {md_escape(value)} |")
     md.append("")
 
     if data.get("all_disks"):
         md += ["### Disks", "", "| Device | Used | Total | Use% | Mount |",
                "|--------|------|-------|------|-------|"]
         for d in data["all_disks"]:
-            md.append(f"| {d['device']} | {d['used']} | {d['total']} | {d['pct']} | {d['mount']} |")
+            md.append(f"| {md_escape(d['device'])} | {md_escape(d['used'])} | {md_escape(d['total'])} | {md_escape(d['pct'])} | {md_escape(d['mount'])} |")
         md.append("")
 
     md += ["---", ""]
@@ -74,14 +88,14 @@ def network_to_markdown(data):
         if key in _NETWORK_SKIP:
             continue
         label = key.replace("_", " ").title()
-        md.append(f"| {label} | {value} |")
+        md.append(f"| {label} | {md_escape(value)} |")
     md.append("")
 
     if data.get("interface_table"):
         md += ["### Interfaces", "", "| Interface | Status | Addresses |",
                "|-----------|--------|-----------|"]
         for iface in data["interface_table"]:
-            md.append(f"| {iface['interface']} | {iface['status']} | {iface['addresses']} |")
+            md.append(f"| {md_escape(iface['interface'])} | {md_escape(iface['status'])} | {md_escape(iface['addresses'])} |")
         md.append("")
 
     md += ["---", ""]
@@ -121,9 +135,9 @@ def proxmox_to_markdown(data):
         ]
         for vm in node["vms"]:
             md.append(
-                f"| {vm['vmid']} | {vm['name']} | {vm['status']} | {vm.get('tags','')} |"
+                f"| {vm['vmid']} | {md_escape(vm['name'])} | {vm['status']} | {md_escape(vm.get('tags',''))} |"
                 f" {vm['cpus']} | {vm['memory']} / {vm['max_memory']} | {vm['uptime']} |"
-                f" {vm.get('snapshots', '')} | {vm.get('guest_ips', '')} |"
+                f" {vm.get('snapshots', '')} | {md_escape(vm.get('guest_ips', ''))} |"
             )
         md += [
             "",
@@ -133,9 +147,9 @@ def proxmox_to_markdown(data):
         ]
         for ct in node["lxc"]:
             md.append(
-                f"| {ct['vmid']} | {ct['name']} | {ct['status']} | {ct.get('tags','')} |"
+                f"| {ct['vmid']} | {md_escape(ct['name'])} | {ct['status']} | {md_escape(ct.get('tags',''))} |"
                 f" {ct['cpus']} | {ct['memory']} / {ct['max_memory']} | {ct['uptime']} |"
-                f" {ct.get('ip', '')} |"
+                f" {md_escape(ct.get('ip', ''))} |"
             )
         md += [
             "",
@@ -144,8 +158,10 @@ def proxmox_to_markdown(data):
             "|------|------|------|-------|-----------|",
         ]
         for s in node["storage"]:
-            md.append(f"| {s['name']} | {s['type']} | {s['used']} | {s['total']} | {s['available']} |")
+            md.append(f"| {md_escape(s['name'])} | {s['type']} | {s['used']} | {s['total']} | {s['available']} |")
         md.append("")
+
+        md += _notes_block(node.get("notes"), heading="#### Collector Notes")
 
     md += ["---", ""]
     return "\n".join(md)
@@ -158,19 +174,19 @@ def snmp_to_markdown(data):
         if key in _SNMP_SKIP:
             continue
         label = _SNMP_LABELS.get(key, key.replace("_", " ").title())
-        md.append(f"| {label} | {value} |")
+        md.append(f"| {label} | {md_escape(value)} |")
     md.append("")
 
     if data.get("vlan_list"):
         md += ["### VLANs", "", "| VLAN ID | Name |", "|---------|------|"]
         for v in data["vlan_list"]:
-            md.append(f"| {v['id']} | {v['name']} |")
+            md.append(f"| {v['id']} | {md_escape(v['name'])} |")
         md.append("")
 
     if data.get("port_map"):
         md += ["### Port Map", "", "| Port | Speed | MAC | IP |", "|------|-------|-----|-----|"]
         for entry in data["port_map"]:
-            md.append(f"| {entry['port']} | {entry.get('speed','')} | {entry['mac']} | {entry.get('ip', '')} |")
+            md.append(f"| {md_escape(entry['port'])} | {md_escape(entry.get('speed',''))} | {md_escape(entry['mac'])} | {md_escape(entry.get('ip', ''))} |")
         md.append("")
 
     md += ["---", ""]
@@ -189,7 +205,7 @@ def switch_to_markdown(data):
         if key == "hostname":
             continue
         label = labels.get(key, key.replace("_", " ").title())
-        md.append(f"| {label} | {value} |")
+        md.append(f"| {label} | {md_escape(value)} |")
     md += ["", "---", ""]
     return "\n".join(md)
 
@@ -200,13 +216,13 @@ def windows_to_markdown(data):
     for key, value in data.items():
         if key in _WIN_SKIP:
             continue
-        md.append(f"| {key} | {value} |")
+        md.append(f"| {key} | {md_escape(value)} |")
     md.append("")
 
     if data.get("all_drives"):
         md += ["### Drives", "", "| Drive | Used | Total |", "|-------|------|-------|"]
         for d in data["all_drives"]:
-            md.append(f"| {d['drive']}: | {d['used']} | {d['total']} |")
+            md.append(f"| {md_escape(d['drive'])}: | {md_escape(d['used'])} | {md_escape(d['total'])} |")
         md.append("")
 
     if data.get("network_adapters"):
@@ -214,7 +230,7 @@ def windows_to_markdown(data):
                "| Name | MAC | Speed | Description |",
                "|------|-----|-------|-------------|"]
         for a in data["network_adapters"]:
-            md.append(f"| {a['name']} | {a['mac']} | {a['speed']} | {a['description']} |")
+            md.append(f"| {md_escape(a['name'])} | {md_escape(a['mac'])} | {md_escape(a['speed'])} | {md_escape(a['description'])} |")
         md.append("")
 
     if data.get("running_services"):

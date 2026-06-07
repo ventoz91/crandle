@@ -12,6 +12,11 @@ ARCHIVE_DIR = REPORT_DIR / "Hardware Historic"
 MASTER_PATH = REPORT_DIR / "HardwareSurvey.md"
 
 
+def md_escape(s: str) -> str:
+    """Escape a value for safe embedding in a markdown table cell."""
+    return str(s).replace("|", "\\|").replace("\n", " ")
+
+
 def _ensure_dirs():
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
     ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
