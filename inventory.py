@@ -336,6 +336,20 @@ def main():
         console.print()
         display_summary(ordered_results)
 
+        timestamp = report_timestamp()
+
+        if args.json:
+            json_hosts = [
+                {
+                    "role": role, "host_type": host_type, "collector": collector,
+                    "host": host_addr, "data": data,
+                    "error": str(err) if err else None,
+                }
+                for role, host_type, collector, host_addr, data, err in ordered_results
+            ]
+            json_path = write_json_report(json_hosts, timestamp=timestamp)
+            console.print(f"[green]JSON archive saved:[/green] {json_path}")
+
         if not sections_by_role or args.no_report:
             if not sections_by_role:
                 console.print("\n[yellow]No data collected.[/yellow]")
@@ -349,8 +363,6 @@ def main():
         if args.diff:
             show_diff(full_report)
 
-        timestamp = report_timestamp()
-
         if args.master:
             master_path = write_master_report(full_report)
             console.print(f"\n[green]Master report updated:[/green] {master_path}")
@@ -359,18 +371,6 @@ def main():
         else:
             report_path = write_report(full_report, timestamp=timestamp)
             console.print(f"\n[green]Report saved:[/green] {report_path}")
-
-        if args.json:
-            json_hosts = [
-                {
-                    "role": role, "host_type": host_type, "collector": collector,
-                    "host": host_addr, "data": data,
-                    "error": str(err) if err else None,
-                }
-                for role, host_type, collector, host_addr, data, err in ordered_results
-            ]
-            json_path = write_json_report(json_hosts, timestamp=timestamp)
-            console.print(f"[green]JSON archive saved:[/green] {json_path}")
 
     except KeyboardInterrupt:
         console.print("\n[yellow]Inventory scan cancelled by user.[/yellow]")
