@@ -12,7 +12,9 @@ from collectors.windows import collect_windows
 
 def load_inventory(path="inventory.yml"):
     with open(path, "r") as f:
-        return yaml.safe_load(f)
+        # An empty or comment-only file parses to None (not {}); normalize so
+        # _iter_hosts always gets a dict to call .items() on.
+        return yaml.safe_load(f) or {}
 
 
 def _iter_hosts(inventory: dict):
@@ -36,46 +38,34 @@ def filter_inventory(inventory: dict, host_filter: str) -> dict:
     return filtered
 
 
-def scan_linux(host_config: dict) -> tuple:
-    host = host_config["host"]
-    client = None
-    try:
-        client = connect(host, host_config["user"], legacy=host_config.get("legacy_ssh", False))
-        data = collect_linux(client, compose_paths=host_config.get("compose_paths"))
-        return (host, data, None)
-    except Exception as e:
-        return (host, None, e)
-    finally:
-        if client:
-            client.close()
+def _make_ssh_scanner(collect_fn, collect_kwargs=lambda host_config: {}):
+    """Build a scan_<type> function for an SSH-based collector.
+
+    Handles the connect/collect/close/error boilerplate shared by every
+    SSH-based collector. `collect_kwargs` extracts any extra per-host config
+    (e.g. Linux's `compose_paths`) to pass through to `collect_fn`.
+    """
+    def scan(host_config: dict) -> tuple:
+        host = host_config["host"]
+        client = None
+        try:
+            client = connect(host, host_config["user"], legacy=host_config.get("legacy_ssh", False))
+            data = collect_fn(client, **collect_kwargs(host_config))
+            return (host, data, None)
+        except Exception as e:
+            return (host, None, e)
+        finally:
+            if client:
+                client.close()
+
+    return scan
 
 
-def scan_macos(host_config: dict) -> tuple:
-    host = host_config["host"]
-    client = None
-    try:
-        client = connect(host, host_config["user"], legacy=host_config.get("legacy_ssh", False))
-        data = collect_macos(client)
-        return (host, data, None)
-    except Exception as e:
-        return (host, None, e)
-    finally:
-        if client:
-            client.close()
-
-
-def scan_network(host_config: dict) -> tuple:
-    host = host_config["host"]
-    client = None
-    try:
-        client = connect(host, host_config["user"], legacy=host_config.get("legacy_ssh", False))
-        data = collect_network(client)
-        return (host, data, None)
-    except Exception as e:
-        return (host, None, e)
-    finally:
-        if client:
-            client.close()
+scan_linux   = _make_ssh_scanner(collect_linux, lambda h: {"compose_paths": h.get("compose_paths")})
+scan_macos   = _make_ssh_scanner(collect_macos)
+scan_network = _make_ssh_scanner(collect_network)
+scan_switch  = _make_ssh_scanner(collect_switch)
+scan_windows = _make_ssh_scanner(collect_windows)
 
 
 def scan_proxmox(host_config: dict) -> tuple:
@@ -94,34 +84,6 @@ def scan_snmp(host_config: dict) -> tuple:
         return (host, data, None)
     except Exception as e:
         return (host, None, e)
-
-
-def scan_switch(host_config: dict) -> tuple:
-    host = host_config["host"]
-    client = None
-    try:
-        client = connect(host, host_config["user"], legacy=host_config.get("legacy_ssh", False))
-        data = collect_switch(client)
-        return (host, data, None)
-    except Exception as e:
-        return (host, None, e)
-    finally:
-        if client:
-            client.close()
-
-
-def scan_windows(host_config: dict) -> tuple:
-    host = host_config["host"]
-    client = None
-    try:
-        client = connect(host, host_config["user"], legacy=host_config.get("legacy_ssh", False))
-        data = collect_windows(client)
-        return (host, data, None)
-    except Exception as e:
-        return (host, None, e)
-    finally:
-        if client:
-            client.close()
 
 
 SCAN_FNS = {

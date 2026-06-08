@@ -6,12 +6,27 @@ from render.markdown import _LINUX_SKIP, _MACOS_SKIP, _NETWORK_SKIP, _SNMP_SKIP,
 console = Console()
 
 
-def _print_notes(notes, label="Collector notes"):
+def _print_notes(notes):
     if not notes:
         return
-    console.print(f"[yellow]  {label}:[/yellow]")
+    console.print("[yellow]  Collector notes:[/yellow]")
     for n in notes:
         console.print(f"[yellow]    - {n}[/yellow]")
+
+
+def _print_disk_table(hostname, disks):
+    """Print a Linux/macOS-style 'all_disks' list as a Rich table."""
+    if not disks:
+        return
+    disk_table = Table(title=f"Disks on {hostname}")
+    disk_table.add_column("Device")
+    disk_table.add_column("Used")
+    disk_table.add_column("Total")
+    disk_table.add_column("Use%")
+    disk_table.add_column("Mount")
+    for d in disks:
+        disk_table.add_row(d["device"], d["used"], d["total"], d["pct"], d["mount"])
+    console.print(disk_table)
 
 
 def _status_style(status: str) -> str:
@@ -33,16 +48,7 @@ def display_linux(data):
         table.add_row(key, str(value))
     console.print(table)
 
-    if data.get("all_disks"):
-        disk_table = Table(title=f"Disks on {data['hostname']}")
-        disk_table.add_column("Device")
-        disk_table.add_column("Used")
-        disk_table.add_column("Total")
-        disk_table.add_column("Use%")
-        disk_table.add_column("Mount")
-        for d in data["all_disks"]:
-            disk_table.add_row(d["device"], d["used"], d["total"], d["pct"], d["mount"])
-        console.print(disk_table)
+    _print_disk_table(data["hostname"], data.get("all_disks"))
 
     if data.get("failed_services"):
         console.print(f"[red]  Failed services:[/red] {data['failed_services']}")
@@ -77,16 +83,7 @@ def display_macos(data):
         table.add_row(key, str(value))
     console.print(table)
 
-    if data.get("all_disks"):
-        disk_table = Table(title=f"Disks on {data['hostname']}")
-        disk_table.add_column("Device")
-        disk_table.add_column("Used")
-        disk_table.add_column("Total")
-        disk_table.add_column("Use%")
-        disk_table.add_column("Mount")
-        for d in data["all_disks"]:
-            disk_table.add_row(d["device"], d["used"], d["total"], d["pct"], d["mount"])
-        console.print(disk_table)
+    _print_disk_table(data["hostname"], data.get("all_disks"))
 
 
 def display_network(data):
@@ -265,6 +262,19 @@ def display_windows(data):
         console.print(svc_table)
 
 
+# Per-collector "Details" column for the up/healthy case — every collector here
+# produces a single summary row of the same (role, hostname, type, "up", details)
+# shape; only Proxmox differs (one row per node), so it's handled separately below.
+_SUMMARY_DETAILS = {
+    "linux":   lambda d: f"{d.get('uptime', '')}  |  {d.get('memory', '')}",
+    "macos":   lambda d: f"{d.get('uptime', '')}  |  {d.get('memory', '')}",
+    "windows": lambda d: f"{d.get('os', '')}  |  {d.get('memory', '')}",
+    "network": lambda d: f"{d.get('platform', '')}  |  {d.get('uptime', '')}",
+    "snmp":    lambda d: f"{d.get('uptime', '')}  |  {d.get('ports', '')}  |  {d.get('mac_entries', '')} MACs",
+    "switch":  lambda d: f"{d.get('model', '')}  |  {d.get('uptime', '')}  |  {d.get('ports', '')}",
+}
+
+
 def display_summary(results: list):
     table = Table(title="Scan Summary", show_lines=False)
     table.add_column("Role")
@@ -276,36 +286,6 @@ def display_summary(results: list):
     for role, host_type, collector, host_addr, data, err in results:
         if err:
             table.add_row(role, host_addr, host_type, "[red]failed[/red]", str(err)[:60])
-        elif collector in ("linux", "macos"):
-            table.add_row(
-                role, data.get("hostname", host_addr), host_type,
-                "[green]up[/green]",
-                f"{data.get('uptime', '')}  |  {data.get('memory', '')}",
-            )
-        elif collector == "windows":
-            table.add_row(
-                role, data.get("hostname", host_addr), host_type,
-                "[green]up[/green]",
-                f"{data.get('os', '')}  |  {data.get('memory', '')}",
-            )
-        elif collector == "network":
-            table.add_row(
-                role, data.get("hostname", host_addr), host_type,
-                "[green]up[/green]",
-                f"{data.get('platform', '')}  |  {data.get('uptime', '')}",
-            )
-        elif collector == "snmp":
-            table.add_row(
-                role, data.get("hostname", host_addr), host_type,
-                "[green]up[/green]",
-                f"{data.get('uptime', '')}  |  {data.get('ports', '')}  |  {data.get('mac_entries', '')} MACs",
-            )
-        elif collector == "switch":
-            table.add_row(
-                role, data.get("hostname", host_addr), host_type,
-                "[green]up[/green]",
-                f"{data.get('model', '')}  |  {data.get('uptime', '')}  |  {data.get('ports', '')}",
-            )
         elif collector == "proxmox":
             for node in data.get("nodes", []):
                 vms_running = sum(1 for v in node.get("vms", []) if v.get("status") == "running")
@@ -315,6 +295,11 @@ def display_summary(results: list):
                     _status_style(node.get("status", "unknown")),
                     f"VMs: {vms_running}/{len(node['vms'])} running  |  LXC: {lxc_running}/{len(node['lxc'])} running",
                 )
+        elif collector in _SUMMARY_DETAILS:
+            table.add_row(
+                role, data.get("hostname", host_addr), host_type,
+                "[green]up[/green]", _SUMMARY_DETAILS[collector](data),
+            )
 
     console.print(table)
 

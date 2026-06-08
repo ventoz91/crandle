@@ -13,6 +13,8 @@ from scanner import SCAN_FNS, load_inventory, filter_inventory, _iter_hosts
 from utils.report import (
     write_report, write_master_report, read_master_report,
     get_previous_archive, write_diff_report, write_json_report, report_timestamp,
+    read_canary_report, parse_canary_summary, canary_report_is_stale,
+    load_json_archives,
 )
 
 
@@ -50,6 +52,32 @@ def run_preflight(inventory: dict):
             table.add_row(role, host, host_type, "[green]yes[/green]" if reachable else "[red]no[/red]")
 
     console.print(table)
+
+
+# ---------------------------------------------------------------------------
+# Canary cross-reference
+# ---------------------------------------------------------------------------
+
+def _canary_status() -> tuple[str, bool] | None:
+    """One-line Canary disk-health note plus a staleness flag, or None if
+    Canary's DiskHealth.md is missing or unparseable (e.g. not installed,
+    or a future report-format change)."""
+    content = read_canary_report()
+    if content is None:
+        return None
+
+    parsed = parse_canary_summary(content)
+    if parsed is None:
+        return None
+
+    generated_at, summary = parsed
+    when = generated_at.strftime("%Y-%m-%d %H:%M")
+    stale = canary_report_is_stale(generated_at)
+    if stale:
+        note = f"Canary disk health report is stale — last updated {when} (over a week ago). See DiskHealth.md."
+    else:
+        note = f"Canary disk health ({when}): {summary} — see DiskHealth.md"
+    return note, stale
 
 
 # ---------------------------------------------------------------------------
@@ -228,6 +256,96 @@ def save_survey_diff():
 
 
 # ---------------------------------------------------------------------------
+# Disk trend tracking
+# ---------------------------------------------------------------------------
+
+# Matches a usage percentage like "84%" out of an all_disks 'pct' value
+_PCT_VALUE_RE = re.compile(r'(\d+\.?\d*)\s*%')
+
+
+def _parse_pct(val) -> float | None:
+    if not val:
+        return None
+    m = _PCT_VALUE_RE.search(str(val))
+    return float(m.group(1)) if m else None
+
+
+def _disk_trends(archives: list[dict]) -> list[dict]:
+    """Build per-host/per-mount trend rows from --json archives (oldest first).
+
+    Returns one {host, mount, oldest_pct, latest_pct, change, days} row for
+    every (host, mount) pair that appears in at least two archives, comparing
+    its first and last sighting.
+    """
+    series = {}
+    for archive in archives:
+        try:
+            ts = datetime.strptime(archive.get("timestamp", ""), "%Y-%m-%d_%H-%M")
+        except ValueError:
+            continue
+        for entry in archive.get("hosts", []):
+            data = entry.get("data") or {}
+            host = data.get("hostname") or entry.get("host", "")
+            for disk in data.get("all_disks") or []:
+                pct = _parse_pct(disk.get("pct"))
+                if pct is None:
+                    continue
+                series.setdefault((host, disk.get("mount", "")), []).append((ts, pct))
+
+    rows = []
+    for (host, mount), points in series.items():
+        if len(points) < 2:
+            continue
+        points.sort()
+        oldest_ts, oldest_pct = points[0]
+        latest_ts, latest_pct = points[-1]
+        rows.append({
+            "host": host, "mount": mount,
+            "oldest_pct": oldest_pct, "latest_pct": latest_pct,
+            "change": latest_pct - oldest_pct,
+            "days": (latest_ts - oldest_ts).days,
+        })
+    return rows
+
+
+def show_trend():
+    archives = load_json_archives()
+    if len(archives) < 2:
+        console.print("[yellow]Need at least two --json archives to show trends — "
+                      "run a few scans with --json first.[/yellow]")
+        return
+
+    rows = _disk_trends(archives)
+    if not rows:
+        console.print("[yellow]No comparable disk data found across the archived reports.[/yellow]")
+        return
+
+    table = Table(title=f"Disk Trend — {archives[0]['timestamp']} → {archives[-1]['timestamp']} "
+                        f"({len(archives)} reports)")
+    table.add_column("Host")
+    table.add_column("Mount")
+    table.add_column("Oldest")
+    table.add_column("Latest")
+    table.add_column("Change")
+    table.add_column("Days")
+
+    for r in sorted(rows, key=lambda r: r["change"], reverse=True):
+        change = r["change"]
+        change_str = f"{'+' if change > 0 else ''}{change:.1f}%"
+        if change >= _PCT_THRESHOLD:
+            change_str = f"[red]{change_str}[/red]"
+        elif change <= -_PCT_THRESHOLD:
+            change_str = f"[green]{change_str}[/green]"
+        table.add_row(
+            r["host"], r["mount"],
+            f"{r['oldest_pct']:.0f}%", f"{r['latest_pct']:.0f}%",
+            change_str, str(r["days"]),
+        )
+
+    console.print(table)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -247,6 +365,7 @@ def main():
             "  python inventory.py --inventory ~/lab.yml  use a custom inventory file\n"
             "  python inventory.py --save-diff            write diff of master vs previous archive\n"
             "  python inventory.py --json                 also write a timestamped JSON archive\n"
+            "  python inventory.py --trend                show disk usage trend across JSON archives\n"
         ),
     )
     parser.add_argument("--master", action="store_true",
@@ -259,6 +378,8 @@ def main():
                         help="show changes compared to the last master report")
     parser.add_argument("--save-diff", action="store_true",
                         help="write a diff file comparing master vs. previous archive to Hardware Historic/")
+    parser.add_argument("--trend", action="store_true",
+                        help="show disk usage trend per host/mount across all --json archives")
     parser.add_argument("--json", action="store_true",
                         help="also write a timestamped JSON archive of raw collected data alongside the report")
     parser.add_argument("--host", metavar="HOST",
@@ -269,6 +390,10 @@ def main():
 
     if args.save_diff:
         save_survey_diff()
+        return
+
+    if args.trend:
+        show_trend()
         return
 
     try:
@@ -336,6 +461,12 @@ def main():
         console.print()
         display_summary(ordered_results)
 
+        canary_status = _canary_status()
+        if canary_status:
+            note, stale = canary_status
+            style = "yellow" if stale else "cyan"
+            console.print(f"\n[{style}]{note}[/{style}]")
+
         timestamp = report_timestamp()
 
         if args.json:
@@ -350,9 +481,8 @@ def main():
             json_path = write_json_report(json_hosts, timestamp=timestamp)
             console.print(f"[green]JSON archive saved:[/green] {json_path}")
 
-        if not sections_by_role or args.no_report:
-            if not sections_by_role:
-                console.print("\n[yellow]No data collected.[/yellow]")
+        if not sections_by_role:
+            console.print("\n[yellow]No data collected.[/yellow]")
             return
 
         full_report = "\n\n".join(
@@ -360,8 +490,15 @@ def main():
             for role, sections in sections_by_role.items()
         )
 
+        if canary_status:
+            note, stale = canary_status
+            full_report = f"> {'⚠ ' if stale else ''}{note}\n\n" + full_report
+
         if args.diff:
             show_diff(full_report)
+
+        if args.no_report:
+            return
 
         if args.master:
             master_path = write_master_report(full_report)

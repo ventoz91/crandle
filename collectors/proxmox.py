@@ -2,7 +2,7 @@ import getpass
 
 from proxmoxer import ProxmoxAPI
 
-from utils.ssh import _password_lock
+from utils.ssh import password_lock
 
 _proxmox_password_cache = {}
 
@@ -51,7 +51,7 @@ def connect_proxmox(host, user, realm, verify_ssl, token_id=None, token_secret=N
         )
 
     cache_key = f"{user}@{host}"
-    with _password_lock:
+    with password_lock:
         if cache_key not in _proxmox_password_cache:
             _proxmox_password_cache[cache_key] = getpass.getpass(f"Proxmox password for {user}@{host}: ")
 

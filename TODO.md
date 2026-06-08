@@ -2,12 +2,6 @@
 
 ## Priority 3 — Larger features
 
-### Disk trend tracking (`--trend` flag)
-Timestamped archives already exist in `Hardware Historic/`. Add a `--trend` flag
-that reads the last N reports and shows delta/trajectory per disk mount per host —
-answers "how fast is my plex pool filling up?" without manually diffing old files.
-Could output a small table: host | mount | oldest% | latest% | change | days.
-
 ### Smart change detection
 `--diff` currently produces a raw unified text diff. Replace or augment with a
 structured diff that understands the data: flag meaningful changes only (disk
@@ -18,6 +12,59 @@ new host added/removed). Would make automated weekly runs actually alertable.
 The `interfaces` field on Linux hosts is a long flat string. Parse it into a
 proper `interface_table` list (same shape as the network collector's) so it
 renders as a subtable rather than a wrapped blob in the property row.
+
+### Canary disk-health cross-reference
+Canary (`~/Documents/Projects/canary` — a separate SMART monitoring tool)
+already writes `DiskHealth.md` straight into `REPORT_DIR`
+(`~/Documents/Notes/Ventoz/Reference/DiskHealth.md`), no new path needed. Its
+header carries a parseable timestamp and summary:
+
+```
+# Disk Health — 2026-06-07 22:51
+
+**Summary** — Healthy: 9  ·  Warning: 2
+```
+
+Crandle could read that file and surface a coarse, host-level pointer in its
+own report — e.g. a top-level Collector Note reading "Canary (2026-06-07
+22:51): Healthy: 9 · Warning: 2 — see DiskHealth.md" — and flag it as **stale**
+if the parsed timestamp is more than 7 days old (the monthly systemd timer
+should keep it fresh; a stale report usually means the timer broke, not that
+the drives are fine).
+
+Deliberately *not* attempting a per-drive join against `all_disks`: Crandle's
+disk records are filesystem-level (keyed by mount point, from `df`), while
+Canary's are physical-drive-level (keyed by serial number, raw block devices
+like `/dev/sda`). Mapping one to the other — especially through LVM/ZFS/RAID,
+where several physical drives sit behind one mount — is a real correlation
+problem that's easy to get subtly wrong. A host-level pointer is coarse enough
+to never misattribute one drive's health to another's mount point.
+
+---
+
+## Smaller enhancements
+
+### `--role` filter
+Mirror `--host` (substring match on host address) but for role names — lets you
+scan just `servers` or `network` from a large inventory without editing the
+inventory file or filtering by address.
+
+### Configurable worker count
+The scan and preflight loops both use `ThreadPoolExecutor()` with Python's
+default `min(32, os.cpu_count() + 4)` worker count. A `--workers N` flag (or an
+inventory-level setting) would let scans of large inventories with many slow
+SSH/SNMP hosts be tuned for throughput, or throttled to avoid hammering a
+host's SSH daemon.
+
+## Testing
+
+A good chunk of the collector and report logic is pure string/regex parsing of
+captured command output with no I/O — `_kv` / `_fmt_uptime` / `_count_ports` in
+`switch.py`, `_int` / `_fmt_mac_hex` / `_fmt_uptime` in `snmp.py`, and the
+diff-noise filtering (`_noise_only` / `_filter_size_noise` / `_clean_empty_hunks`)
+in `inventory.py`. These are prime candidates for a unit test suite against
+captured sample output, and would catch regressions in the trickier regex-based
+parsing without needing a live host to scan.
 
 ---
 

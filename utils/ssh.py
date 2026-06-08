@@ -4,7 +4,12 @@ import threading
 import paramiko
 
 password_cache = {}
-_password_lock = threading.Lock()
+# Not project-private: also used by collectors/proxmox.py to serialize its own
+# password prompts on the same lock, so getpass() never interleaves across
+# SSH and Proxmox auth from parallel scan threads.
+password_lock = threading.Lock()
+
+_PASSWORD_ATTEMPTS = 2
 
 
 def connect(host: str, username: str, legacy: bool = False):
@@ -34,20 +39,36 @@ def connect(host: str, username: str, legacy: bool = False):
     except paramiko.AuthenticationException:
         print(f"[INFO] Key auth failed for {host}")
 
-        with _password_lock:
+    last_error = None
+    for attempt in range(_PASSWORD_ATTEMPTS):
+        with password_lock:
             if username not in password_cache:
                 password_cache[username] = getpass.getpass(f"Password for {username}: ")
+            password = password_cache[username]
 
-        client.connect(
-            hostname=host,
-            username=username,
-            password=password_cache[username],
-            timeout=10,
-            look_for_keys=False,
-            **extra,
-        )
-        print(f"[OK] Password auth succeeded for {host}")
-        return client
+        try:
+            client.connect(
+                hostname=host,
+                username=username,
+                password=password,
+                timeout=10,
+                look_for_keys=False,
+                **extra,
+            )
+            print(f"[OK] Password auth succeeded for {host}")
+            return client
+        except paramiko.AuthenticationException as e:
+            last_error = e
+            # Drop the bad password so the next host (or retry) re-prompts
+            # instead of every host under this username failing silently.
+            with password_lock:
+                if password_cache.get(username) == password:
+                    del password_cache[username]
+            remaining = _PASSWORD_ATTEMPTS - attempt - 1
+            print(f"[INFO] Password auth failed for {username}@{host}"
+                  f" — {'retrying' if remaining else 'giving up'}")
+
+    raise last_error
 
 
 def run_command(client, command: str, timeout: int = 30) -> str:
@@ -55,8 +76,10 @@ def run_command(client, command: str, timeout: int = 30) -> str:
     try:
         output = stdout.read().decode().strip()
         error = stderr.read().decode().strip()
-    except Exception:
-        return "ERROR: command timed out"
-    if error:
+    except Exception as e:
+        return f"ERROR: failed to read command output ({e})"
+    # Many commands write benign warnings to stderr while still succeeding —
+    # only treat it as a failure if it produced no usable stdout.
+    if error and not output:
         return f"ERROR: {error}"
     return output

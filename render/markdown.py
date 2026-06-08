@@ -22,6 +22,21 @@ def _notes_block(notes, heading="### Collector Notes"):
     return md
 
 
+def _disk_table(disks):
+    """Render a Linux/macOS-style 'all_disks' list as a markdown subtable."""
+    if not disks:
+        return []
+    md = ["### Disks", "", "| Device | Used | Total | Use% | Mount |",
+          "|--------|------|-------|------|-------|"]
+    for d in disks:
+        md.append(
+            f"| {md_escape(d['device'])} | {md_escape(d['used'])} | "
+            f"{md_escape(d['total'])} | {md_escape(d['pct'])} | {md_escape(d['mount'])} |"
+        )
+    md.append("")
+    return md
+
+
 def linux_to_markdown(data):
     md = [f"## {data['hostname']}", ""]
     md += ["| Property | Value |", "|----------|-------|"]
@@ -31,12 +46,7 @@ def linux_to_markdown(data):
         md.append(f"| {key} | {md_escape(value)} |")
     md.append("")
 
-    if data.get("all_disks"):
-        md += ["### Disks", "", "| Device | Used | Total | Use% | Mount |",
-               "|--------|------|-------|------|-------|"]
-        for d in data["all_disks"]:
-            md.append(f"| {md_escape(d['device'])} | {md_escape(d['used'])} | {md_escape(d['total'])} | {md_escape(d['pct'])} | {md_escape(d['mount'])} |")
-        md.append("")
+    md += _disk_table(data.get("all_disks"))
 
     if data.get("failed_services"):
         md += ["### Failed Services", "", f"```\n{data['failed_services']}\n```", ""]
@@ -70,12 +80,7 @@ def macos_to_markdown(data):
         md.append(f"| {key} | {md_escape(value)} |")
     md.append("")
 
-    if data.get("all_disks"):
-        md += ["### Disks", "", "| Device | Used | Total | Use% | Mount |",
-               "|--------|------|-------|------|-------|"]
-        for d in data["all_disks"]:
-            md.append(f"| {md_escape(d['device'])} | {md_escape(d['used'])} | {md_escape(d['total'])} | {md_escape(d['pct'])} | {md_escape(d['mount'])} |")
-        md.append("")
+    md += _disk_table(data.get("all_disks"))
 
     md += ["---", ""]
     return "\n".join(md)

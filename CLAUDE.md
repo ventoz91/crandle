@@ -72,7 +72,7 @@ All `*_to_markdown()` functions output at `##` level so they slot cleanly under 
    - Add `display_<type>(data)` using `console.print(Table(...))` (skip `hostname` row; import any new skip sets from `render/markdown.py`)
    - Register it in `DISPLAY_FNS`
 4. In `scanner.py`:
-   - Add `scan_<type>(host_config) -> tuple` returning `(host_addr, data, error)` with a `try/except/finally` that closes any connection in `finally`
+   - For SSH-based collectors, register `scan_<type> = _make_ssh_scanner(collect_<type>)` — it handles the connect/collect/close/error boilerplate (pass a `collect_kwargs` lambda if the collector needs extra per-host config, e.g. Linux's `compose_paths`). For non-SSH collectors (Proxmox, SNMP), write a plain `scan_<type>(host_config) -> tuple` returning `(host_addr, data, error)`.
    - Register it in `SCAN_FNS`
 5. In `inventory.py`, add `display_summary` handling for the new type — results tuples are `(role, host_type, collector, host_addr, data, err)` (6 elements)
 6. Add a commented-out example to `inventory.yml`
@@ -86,6 +86,7 @@ All `*_to_markdown()` functions output at `##` level so they slot cleanly under 
 | `--diff` | Show unified diff vs. last master |
 | `--save-diff` | Write a filtered diff file (master vs. previous archive) — no scan needed |
 | `--json` | Also write a timestamped JSON archive of raw collected data, paired with the markdown report by timestamp |
+| `--trend` | Show disk usage trend per host/mount across all `--json` archives — no scan needed |
 | `--no-report` | Terminal display only |
 | `--dry-run` | Ping check only, no scanning |
 | `--host HOST` | Substring filter on host address |
